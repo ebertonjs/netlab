@@ -170,23 +170,6 @@ O banco é migrado automaticamente na primeira subida. Faça backup antes.
 
 ---
 
-## 📤 Publicando no GitHub (tutorial)
-
-```bash
-cd netlab
-
-git init -b main
-git add .
-git status          # confira: não pode aparecer venv, netnoc.db nem netnoc.key
-git commit -m "NetNOC v2.0"
-
-git remote add origin https://github.com/ebertonjs/netlab.git
-git push -u origin main
-```
-
-- **Autenticação:** o GitHub não aceita senha de conta no `git push`. Use um token de acesso pessoal (Settings → Developer settings → Personal access tokens) como senha, ou `gh auth login`.
-- **Repositório já com conteúdo:** rode `git pull origin main --rebase --allow-unrelated-histories` antes do `push`.
-- **Próximas alterações:** `git add -A && git commit -m "descrição" && git push`.
 
 ---
 
