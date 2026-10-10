@@ -1,0 +1,26 @@
+{
+  "ping_interval_seconds": 5,
+  "dns_check_interval_seconds": 30,
+  "public_ip_interval_seconds": 300,
+  "system_interval_seconds": 5,
+  "history_retention_days": 30,
+  "targets": [
+    {"name": "Google", "host": "8.8.8.8"},
+    {"name": "Cloudflare", "host": "1.1.1.1"},
+    {"name": "Gateway", "host": "192.168.1.1"}
+  ],
+  "dns_servers": [
+    {"name": "Google", "ip": "8.8.8.8"},
+    {"name": "Cloudflare", "ip": "1.1.1.1"},
+    {"name": "Quad9", "ip": "9.9.9.9"}
+  ],
+  "dns_query_name": "google.com",
+  "thresholds": {
+    "ping_ms": 80,
+    "jitter_ms": 20,
+    "loss_pct": 2,
+    "dns_ms": 150,
+    "cpu_pct": 80,
+    "temp_c": 70
+  }
+}

@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Status dos serviços</title>
+<meta name="robots" content="noindex">
+<style>
+:root{--bg:#f4f6fb;--panel:#fff;--text:#131a2b;--muted:#4a5573;--border:#dbe1ee;--ok:#12803f;--warn:#a86400;--bad:#b3261e;}
+@media (prefers-color-scheme: dark){:root{--bg:#0b0f19;--panel:#11172a;--text:#e6e9f2;--muted:#9aa4c0;--border:#232b45;--ok:#3ddc84;--warn:#ffb23d;--bad:#ff6b6b;}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+main{max-width:860px;margin:0 auto;padding:24px 16px 60px}
+h1{font-size:22px;margin:0 0 4px}.sub{color:var(--muted);font-size:13px;margin-bottom:18px}
+.banner{padding:16px 18px;border-radius:12px;font-weight:700;font-size:18px;margin-bottom:18px;border:1px solid var(--border);background:var(--panel)}
+.banner.ok{border-color:var(--ok);color:var(--ok)}.banner.degraded{border-color:var(--warn);color:var(--warn)}.banner.down{border-color:var(--bad);color:var(--bad)}
+.item{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:12px}
+.row{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:8px;font-weight:600}
+.st{font-size:13px;font-weight:700}.st.ok{color:var(--ok)}.st.bad{color:var(--bad)}.st.na{color:var(--muted)}
+.bars{display:flex;gap:2px;height:30px}.bar{flex:1;border-radius:2px;background:var(--border)}
+.bar.ok{background:var(--ok)}.bar.warn{background:var(--warn)}.bar.bad{background:var(--bad)}
+.legend{display:flex;justify-content:space-between;color:var(--muted);font-size:12px;margin-top:4px}
+h2{font-size:16px;margin:26px 0 10px}.inc{font-size:13px;color:var(--muted);padding:6px 0;border-bottom:1px solid var(--border)}
+.empty{color:var(--muted);text-align:center;padding:30px}
+</style>
+</head>
+<body><main>
+<h1 id="title">Status dos serviços</h1><div class="sub" id="updated">carregando…</div>
+<div id="banner" class="banner"></div><div id="items"></div>
+<h2>Incidentes (7 dias)</h2><div id="incs"></div>
+</main><script src="status.js"></script></body></html>

@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html lang="pt-br"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Relatório de SLA — NetNOC</title>
+<style>
+body{font:14px/1.5 system-ui,Segoe UI,Roboto,sans-serif;color:#131a2b;margin:0;padding:24px;background:#fff}
+h1{font-size:22px;margin:0}.sub{color:#4a5573;margin:2px 0 18px}
+table{border-collapse:collapse;width:100%;font-size:13px}th,td{border:1px solid #cfd6e6;padding:6px 8px;text-align:left}
+th{background:#eef1f8}td.n{text-align:right;font-variant-numeric:tabular-nums}.bad{color:#b3261e;font-weight:700}
+.bar{height:8px;background:#e1e6f2;border-radius:4px;overflow:hidden}.bar i{display:block;height:100%;background:#12803f}
+.tools{margin-bottom:16px}button{padding:8px 14px;border:1px solid #cfd6e6;background:#f4f6fb;border-radius:8px;cursor:pointer;font:inherit}
+@media print{.tools{display:none}body{padding:0}}
+</style></head>
+<body><div class="tools"><button id="printBtn" type="button">🖨 Imprimir / salvar PDF</button></div>
+<h1>Relatório de SLA</h1><div class="sub" id="period">carregando…</div><div id="out"></div>
+<script src="report.js"></script></body></html>

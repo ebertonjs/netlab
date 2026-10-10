@@ -1,0 +1,11 @@
+*.bak
+*.pyc
+.DS_Store
+.venv/
+__pycache__/
+netnoc.db
+netnoc.db-shm
+netnoc.db-wal
+netnoc.key
+netnoc_backup.db
+venv/
