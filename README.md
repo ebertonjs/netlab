@@ -6,7 +6,21 @@ Dashboard de monitoramento de rede em tempo real, feito para rodar em um Raspber
 ![FastAPI](https://img.shields.io/badge/FastAPI-backend-009688)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-<img width="1895" height="906" alt="Captura de tela do NetNOC" src="https://github.com/user-attachments/assets/7db5add4-7fbd-4db5-9de3-e83e63b92434" />
+![Mission Control](docs/img/mission-dark-blue.jpg)
+
+---
+
+## 🖼️ Capturas de tela
+
+> Dados de demonstração.
+
+| | |
+|---|---|
+| ![Login](docs/img/login.jpg)<br>**Tela de login** com nome do app e tema | ![Mission Control](docs/img/mission-dark-blue.jpg)<br>**Mission Control** (tema Azul Escuro) |
+| ![Grafana](docs/img/mission-grafana.jpg)<br>**Tema Grafana** | ![Claro](docs/img/mission-light.jpg)<br>**Tema Claro** |
+| ![Topologia](docs/img/topologia-hierarquia.jpg)<br>**Topologia em árvore**: impacto das quedas ("isolado por…") | ![Roxo](docs/img/mission-dark-purple.jpg)<br>**Tema Roxo Escuro** |
+| ![TV alerta](docs/img/tv-alerta.jpg)<br>**Modo TV: alerta** que toma a tela | ![TV visão geral](docs/img/tv-visao-geral.jpg)<br>**Modo TV: visão geral** |
+| ![TV topologia](docs/img/tv-topologia.jpg)<br>**Modo TV: topologia** | ![TV 24h](docs/img/tv-24h.jpg)<br>**Modo TV: últimas 24 h** |
 
 ---
 
@@ -37,12 +51,16 @@ Dashboard de monitoramento de rede em tempo real, feito para rodar em um Raspber
 - Traceroute, comparação IPv4 × IPv6 e descoberta de dispositivos na rede (ICMP + ARP + DNS reverso)
 
 **Interface**
-- **Modo TV** (botão 📺 ou `#tv`) com KPIs, alertas em tela, equipamento MikroTik com portas ao vivo e rodízio de telas
-- Topologia com qualidade dos links e tráfego em tempo real
-- 5 temas, dashboard arrastável, layout responsivo, PWA instalável
+- **Mission Control**: painel principal com saúde da rede, radar de latência, incidentes, equipamentos, speedtest, sites e AdGuard
+- **Modo TV** (botão 📺 ou `#tv`): 4 cenas em rodízio (visão geral, topologia, equipamentos, 24 h), tela de alerta que toma o monitor, som e toasts
+- **Topologia em árvore** (hierarquia com impacto das quedas, "isolado por X") e grafo livre, com tráfego dos links em tempo real
+- 7 temas (Azul, Verde, Roxo, OLED, Claro, **Grafana** e Personalizado) que valem em toda a interface, inclusive Mission Control, TV e login
+- Menu lateral recolhível, layout responsivo e PWA instalável
+- Nome da aplicação configurável (aparece em menu, login, TV, alertas, relatórios e app instalado)
 
 **Segurança**
-- Login obrigatório (perfis `admin` e `viewer`), proteção CSRF, CSP, limite de tentativas de login
+- **Tela de login própria** (sessão por cookie HttpOnly/SameSite, "manter conectado", botão Sair), perfis `admin` e `viewer`, proteção CSRF, CSP e limite de tentativas
+- Basic Auth continua disponível para scripts/curl; `/metrics` com token Bearer
 - Senhas e tokens cifrados no banco (Fernet), validação de entradas, log de auditoria
 
 ---
@@ -56,6 +74,8 @@ Dashboard de monitoramento de rede em tempo real, feito para rodar em um Raspber
 ---
 
 ## 🚀 Instalação
+
+> 📘 **Tutorial completo passo a passo (serviço, HTTPS, backup, problemas comuns): [INSTALL.md](INSTALL.md)**
 
 ```bash
 git clone https://github.com/ebertonjs/netlab.git
@@ -86,7 +106,7 @@ source venv/bin/activate
 python3 -m uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
-Acesse `http://IP_DO_DISPOSITIVO:8000` (descubra o IP com `hostname -I`).
+Acesse `http://IP_DO_DISPOSITIVO:8000` (descubra o IP com `hostname -I`) e entre pela tela de login.
 
 ### Primeiro acesso
 
@@ -102,6 +122,8 @@ NetNOC: usuário inicial 'admin'  senha: xxxxxxxxxxxx
 - Para criar usuários só de leitura: **Configurações → Segurança**
 
 ### Rodar como serviço (systemd)
+
+Atalho: `./install.sh --service` cria e ativa o serviço sozinho. Manualmente:
 
 Crie `/etc/systemd/system/netnoc.service` ajustando usuário e caminhos:
 
@@ -170,7 +192,6 @@ O banco é migrado automaticamente na primeira subida. Faça backup antes.
 
 ---
 
-
 ---
 
 ## 🗂️ Estrutura
@@ -185,7 +206,12 @@ snmp.py zabbix.py  integrações
 sla.py backup.py   relatórios e backup
 agent.py           agente para sites remotos
 manage.py          administração de usuários/senhas
-static/            interface (HTML, CSS e JS sem build)
+notifier.py        canais de notificação (Telegram, Discord, webhook, e-mail)
+sites.py           multi-site (agentes)
+static/            interface (HTML, CSS e JS sem build; login.html = tela de login)
+docs/              notas de cada atualização
+INSTALL.md         tutorial de instalação
+CHANGELOG.md       histórico de versões
 ```
 
 ---

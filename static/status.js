@@ -12,7 +12,7 @@
     } catch (e) {
       banner.className = 'banner'; banner.textContent = e.message; items.replaceChildren(); return;
     }
-    document.title = d.title; document.getElementById('title').textContent = d.title;
+    document.title = d.title + (d.app ? ' — ' + d.app : ''); document.getElementById('title').textContent = d.title;
     document.getElementById('updated').textContent = 'Atualizado em ' + new Date(d.updated * 1000).toLocaleTimeString('pt-BR');
     const msg = {ok: '✔ Todos os sistemas operacionais', degraded: '⚠ Instabilidade em alguns serviços', down: '✖ Serviços indisponíveis', unknown: 'Sem dados'};
     banner.className = 'banner ' + d.overall; banner.textContent = msg[d.overall] || msg.unknown;

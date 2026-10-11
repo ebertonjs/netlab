@@ -4,6 +4,7 @@
     return d ? d + 'd ' + h + 'h' : h ? h + 'h ' + m + 'm' : m + 'm ' + (s % 60) + 's'; };
   const f = ts => new Date(ts * 1000).toLocaleString('pt-BR');
   document.getElementById('printBtn').addEventListener('click', () => window.print());
+  fetch('/api/settings/appname').then(r => r.json()).then(a => { if (a && a.name) document.title = 'Relatório de SLA — ' + a.name; }).catch(() => {});
   const qs = location.search || '?days=30';
   fetch('/api/sla' + qs).then(r => { if (!r.ok) throw new Error('Erro ' + r.status); return r.json(); }).then(d => {
     document.getElementById('period').textContent = f(d.start) + ' → ' + f(d.end) + ' · gerado em ' + f(Date.now() / 1000);

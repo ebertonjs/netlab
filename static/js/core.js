@@ -95,6 +95,26 @@ function applyTheme(theme){
   } else {
     clearCustomThemeVars();
   }
+  updateThemeTone();
+}
+
+// Marca se o tema é claro/escuro (usado por Mission Control e Modo TV, inclusive com tema personalizado)
+function updateThemeTone(){
+  try{
+    const root = document.documentElement;
+    let c = getComputedStyle(root).getPropertyValue('--bg').trim();
+    const m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(c);
+    let lum = 0;
+    if(m){
+      let x = m[1]; if(x.length === 3) x = x.split('').map(ch => ch+ch).join('');
+      const n = parseInt(x, 16);
+      lum = (0.299*((n>>16)&255) + 0.587*((n>>8)&255) + 0.114*(n&255)) / 255;
+    } else {
+      const r = /rgba?\((\d+)[ ,]+(\d+)[ ,]+(\d+)/.exec(c);
+      if(r) lum = (0.299*r[1] + 0.587*r[2] + 0.114*r[3]) / 255;
+    }
+    root.setAttribute('data-tone', lum > 0.6 ? 'light' : 'dark');
+  }catch(e){ /* ok */ }
 }
 
 document.getElementById('themeSelect').addEventListener('change', e => {

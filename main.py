@@ -19,7 +19,7 @@ import stats
 import zabbix
 
 CFG = monitor.CFG
-APP_VERSION = "2.0"
+APP_VERSION = "3.0"
 app = FastAPI(title="NetNOC", docs_url=None, redoc_url=None, openapi_url=None)
 app.add_middleware(security.AuthMiddleware)
 
@@ -315,7 +315,7 @@ def set_telegram_ep(data: TelegramIn, request: Request):
         raise HTTPException(400, "Severidade inválida")
     old = monitor.get_telegram()
     try:
-        new = security.merge_secrets(old, data.dict(), ("bot_token",), ("chat_id",))
+        new = security.merge_secrets(old, data.dict(), ("bot_token",))
     except ValueError as e:
         raise HTTPException(400, str(e))
     monitor.set_telegram(new["enabled"], new["bot_token"], new["chat_id"], new["min_severity"])
@@ -325,7 +325,7 @@ def set_telegram_ep(data: TelegramIn, request: Request):
 
 @app.post("/api/settings/telegram/test")
 def test_telegram_ep():
-    if not monitor.send_telegram("✅ Teste de alerta NetNOC — configuração funcionando!"):
+    if not monitor.send_telegram(f"✅ Teste de alerta {monitor.get_app_name()} — configuração funcionando!"):
         raise HTTPException(400, "Não foi possível enviar. Confira o token e chat_id.")
     return {"ok": True}
 
@@ -444,6 +444,14 @@ def agh_status_ep():
 @app.get("/api/agh/stats")
 def agh_stats_ep():
     return monitor.get_agh_stats_latest() or {}
+
+
+@app.get("/api/agh/top")
+def agh_top_ep():
+    try:
+        return monitor.get_agh_top()
+    except Exception:
+        return {"clients": [], "queried": [], "blocked": []}
 
 
 @app.get("/api/agh/history")
@@ -714,7 +722,7 @@ def notify_test(channel: str, request: Request):
     if channel not in notifier.CHANNELS:
         raise HTTPException(404, "Canal desconhecido")
     try:
-        notifier.send_channel(channel, "Info", "✅ Teste de alerta NetNOC — canal funcionando!", None, "test")
+        notifier.send_channel(channel, "Info", f"✅ Teste de alerta {monitor.get_app_name()} — canal funcionando!", None, "test")
     except Exception as e:
         raise HTTPException(400, f"Falha: {str(e)[:200]}")
     audit(request, "notify-test", channel)
@@ -855,7 +863,7 @@ def sla_ep(month: Optional[str] = None, days: int = 30):
 @app.get("/api/sla.csv")
 def sla_csv(request: Request, month: Optional[str] = None, days: int = 30):
     s, e = _sla_range(month, days)
-    body = sla.to_csv(sla.report(s, e))
+    body = sla.to_csv(sla.report(s, e), monitor.get_app_name())
     return Response(body.encode("utf-8"), media_type="text/csv; charset=utf-8",
                     headers={"Content-Disposition": 'attachment; filename="sla-netnoc.csv"'})
 
@@ -1036,7 +1044,69 @@ def _public_payload():
            for i in db.query("SELECT target,type,started_ts,resolved_ts FROM incidents WHERE type='offline' "
                              "AND (started_ts>=? OR resolved_ts IS NULL) ORDER BY started_ts DESC LIMIT 50", (cutoff,))
            if i["target"] in names]
-    return {"title": cfg["title"], "overall": overall, "updated": time.time(), "targets": items, "incidents": inc}
+    return {"app": monitor.get_app_name(), "title": cfg["title"], "overall": overall, "updated": time.time(), "targets": items, "incidents": inc}
+
+
+class LoginIn(BaseModel):
+    user: str
+    password: str
+    remember: bool = False
+
+
+def _same_origin(request: Request):
+    if request.headers.get("x-netnoc") != "1":
+        return False
+    o = request.headers.get("origin")
+    return not o or o.split("://", 1)[-1] == request.headers.get("host", "")
+
+
+@app.get("/login")
+def login_page():
+    return FileResponse("static/login.html", headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/loginfo")
+def loginfo():
+    return {"name": monitor.get_app_name(), "version": APP_VERSION, "auth": not security.AUTH_OFF}
+
+
+@app.post("/api/login")
+def login_ep(data: LoginIn, request: Request):
+    if not _same_origin(request):
+        raise HTTPException(403, "Origem inválida")
+    ip = (request.client.host if request.client else "?")
+    if security.rate_limited(ip):
+        raise HTTPException(429, "Muitas tentativas. Aguarde alguns minutos.")
+    user = data.user.strip()
+    role = security.verify(user, data.password)
+    if role is None:
+        security.register_fail(ip)
+        db.audit(user[:40], ip, "login_falhou", "")
+        raise HTTPException(401, "Usuário ou senha inválidos")
+    ttl = security.SESSION_TTL_LONG if data.remember else security.SESSION_TTL
+    resp = JSONResponse({"ok": True, "user": user, "role": role})
+    secure = request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
+    resp.set_cookie(security.SESSION_COOKIE, security.make_session(user, ttl), max_age=ttl if data.remember else None,
+                    httponly=True, samesite="strict", secure=secure, path="/")
+    db.audit(user, ip, "login", "")
+    return resp
+
+
+@app.post("/api/logout")
+def logout_ep(request: Request):
+    resp = JSONResponse({"ok": True})
+    resp.delete_cookie(security.SESSION_COOKIE, path="/")
+    return resp
+
+
+@app.get("/manifest.webmanifest")
+def manifest_ep():
+    name = monitor.get_app_name()
+    with open("static/manifest.webmanifest", encoding="utf-8") as fh:
+        m = json.load(fh)
+    m["name"] = name
+    m["short_name"] = name[:12]
+    return JSONResponse(m, media_type="application/manifest+json", headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/status")

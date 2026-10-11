@@ -1,0 +1,27 @@
+/* v2.9 — Mission Control e Modo TV seguem o tema escolhido (todos menos Azul Escuro padrão e Grafana, que têm paleta própria) */
+:root:not([data-theme="dark-blue"]):not([data-theme="grafana"]) .mc{
+  --mbg:var(--bg);--mp:var(--panel);--mb:var(--border);--mt:var(--text);--mm:var(--muted,#8a93ad);
+  --mc:var(--accent);--mg:var(--green);--ma:var(--orange);--mr:var(--red)}
+:root:not([data-theme="dark-blue"]):not([data-theme="grafana"]) .mc{background:var(--bg)}
+:root:not([data-theme="dark-blue"]):not([data-theme="grafana"]) .tv{
+  --tv-bg:var(--bg);--tv-p:var(--panel);--tv-b:var(--border);--tv-t:var(--text);--tv-m:var(--muted,#8a93ad);
+  --tv-ok:var(--green);--tv-warn:var(--orange);--tv-bad:var(--red);--tv-blue:var(--accent);--tv-cy:var(--accent);
+  --tv-grid:transparent;--tv-glow:transparent;--tv-trk:var(--border)}
+:root:not([data-theme="dark-blue"]):not([data-theme="grafana"]) .mc-sub{background:var(--panel2,var(--panel))}
+:root:not([data-theme="dark-blue"]):not([data-theme="grafana"]) .mc-bar{background:var(--border)}
+:root:not([data-theme="dark-blue"]):not([data-theme="grafana"]) .mc-tx,
+:root:not([data-theme="dark-blue"]):not([data-theme="grafana"]) .mc-note{color:var(--accent)}
+:root:not([data-theme="dark-blue"]):not([data-theme="grafana"]) .mc-card:before,
+:root:not([data-theme="dark-blue"]):not([data-theme="grafana"]) .mc-card:after{display:none}
+/* tema claro (preset ou personalizado de fundo claro): ajusta o SVG do radar/anel e sombras */
+[data-tone="light"]:not([data-theme="grafana"]) .mc-card{box-shadow:0 1px 3px rgba(0,0,0,.08);backdrop-filter:none}
+[data-tone="light"]:not([data-theme="grafana"]) .mc-radar-svg text[fill="#e6edf9"]{fill:var(--text)}
+[data-tone="light"]:not([data-theme="grafana"]) .mc-radar-svg text[fill="#7d8aa8"]{fill:var(--muted)}
+[data-tone="light"]:not([data-theme="grafana"]) .mc-radar-svg circle[fill="#06121a"],
+[data-tone="light"]:not([data-theme="grafana"]) .mc-radar-svg circle[fill="#2a0e14"],
+[data-tone="light"]:not([data-theme="grafana"]) .mc-radar-svg circle[fill="#071a2a"]{fill:var(--panel)}
+[data-tone="light"]:not([data-theme="grafana"]) .mc-radar-svg circle[stroke="rgba(90,150,255,.18)"]{stroke:var(--border)}
+[data-tone="light"]:not([data-theme="grafana"]) .mc-radar-svg line[stroke="rgba(90,150,255,.07)"]{stroke:var(--border)}
+[data-tone="light"]:not([data-theme="grafana"]) .mc-ring circle[stroke="rgba(90,150,255,.14)"]{stroke:var(--border)}
+[data-tone="light"]:not([data-theme="grafana"]) .mc-radar-svg text[fill="#35e0ff"]{fill:var(--accent)}
+[data-tone="light"]:not([data-theme="grafana"]) .mc-radar-svg circle[stroke="#35e0ff"]{stroke:var(--accent)}

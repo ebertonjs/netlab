@@ -505,6 +505,28 @@ def get_agh_status():
             "protection_enabled": st.get("protection_enabled"), "dns_addresses": st.get("dns_addresses")}
 
 
+_agh_top_cache = [0.0, None]
+
+
+def get_agh_top(n=5):
+    """Top clientes / domínios consultados / domínios bloqueados do AdGuard (cache de 30 s)."""
+    if time.time() - _agh_top_cache[0] < 30 and _agh_top_cache[1] is not None:
+        return _agh_top_cache[1]
+    s = _agh_get("stats")
+
+    def norm(lst):
+        out = []
+        for it in (lst or [])[:n]:
+            if isinstance(it, dict) and it:
+                k, v = next(iter(it.items()))
+                out.append({"name": str(k), "count": int(v) if isinstance(v, (int, float)) else 0})
+        return out
+    res = {"clients": norm(s.get("top_clients")), "queried": norm(s.get("top_queried_domains")),
+           "blocked": norm(s.get("top_blocked_domains"))}
+    _agh_top_cache[0], _agh_top_cache[1] = time.time(), res
+    return res
+
+
 def get_agh_stats_latest():
     rows = db.query("SELECT * FROM agh_stats ORDER BY ts DESC LIMIT 1")
     if not rows:
@@ -559,7 +581,7 @@ def raise_incident(itype, target, message, severity):
             (itype, target, message, severity, started_ts))
         _active_incidents[key] = {"id": iid, "severity": severity, "started_ts": started_ts}
     log_event(message, severity)
-    notify(severity, f"🚨 NetNOC [{severity}]\n{message}", "incident", target)
+    notify(severity, f"🚨 {get_app_name()} [{severity}]\n{message}", "incident", target)
 
 
 def resolve_incident(itype, target, message="Resolvido"):
@@ -569,7 +591,7 @@ def resolve_incident(itype, target, message="Resolvido"):
         db.execute("UPDATE incidents SET resolved_ts=? WHERE id=?", (time.time(), incident["id"]))
         log_event(f"{message}: {target}", "Info")
         dur = _format_duration(time.time() - incident["started_ts"])
-        notify(incident["severity"], f"✅ NetNOC [{incident['severity']}]\n{target}: {message}\nDuração: {dur}",
+        notify(incident["severity"], f"✅ {get_app_name()} [{incident['severity']}]\n{target}: {message}\nDuração: {dur}",
                "incident", target)
 
 
@@ -992,7 +1014,7 @@ def start_all():
     init_settings()
     reconcile_incidents()
     warm_state()
-    log_event("NetNOC iniciado", "Info")
+    log_event(f"{get_app_name()} iniciado", "Info")
     for fn in (ping_worker, dns_worker, public_ip_worker, system_worker, rollup_worker,
                prune_worker, mikrotik_worker, agh_worker, cert_worker, snmp_worker, sites_worker):
         threading.Thread(target=fn, daemon=True, name=fn.__name__).start()

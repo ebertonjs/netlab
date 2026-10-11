@@ -398,6 +398,7 @@ document.getElementById('saveCustomThemeBtn')?.addEventListener('click', () => {
   ensureCustomOptionInSelects();
   document.documentElement.setAttribute('data-theme', 'custom');
   applyCustomThemeVars(vars);
+  updateThemeTone();
   localStorage.setItem(THEME_KEY, 'custom');
   const sel = document.getElementById('themeSelect');
   if(sel) sel.value = 'custom';
@@ -421,7 +422,7 @@ document.getElementById('restoreAllBtn')?.addEventListener('click', () => {
 
 const PAGE_TITLES = {
   overview: ["Visão Geral", "Monitoramento em tempo real da sua rede"],
-  topologia: ["Topologia", "Mapa de rede interativo — arraste, dê zoom, clique para inspecionar"],
+  topologia: ["Topologia", "Hierarquia da rede e impacto das quedas"],
   config: ["Configurações", "Destinos, DNS, intervalos e alertas"],
 };
 

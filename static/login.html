@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="dark-blue">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex">
+<title>Entrar</title>
+<link rel="icon" href="icon-192.png">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css?v=20260915a">
+<link rel="stylesheet" href="theme-grafana.css?v=20261012">
+<style>
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;font-family:Inter,system-ui,sans-serif;background:var(--bg);color:var(--text);display:grid;place-items:center;padding:20px;
+  background-image:radial-gradient(60em 40em at 50% 30%,color-mix(in srgb,var(--accent) 16%,transparent),transparent 65%),
+  linear-gradient(color-mix(in srgb,var(--accent) 6%,transparent) 1px,transparent 1px),linear-gradient(90deg,color-mix(in srgb,var(--accent) 6%,transparent) 1px,transparent 1px);
+  background-size:auto,44px 44px,44px 44px;background-attachment:fixed}
+.lg{width:100%;max-width:400px;background:var(--panel);border:1px solid var(--border);border-radius:18px;padding:34px 30px 26px;
+  box-shadow:0 20px 60px rgba(0,0,0,.35)}
+.lg-brand{display:flex;flex-direction:column;align-items:center;gap:6px;margin-bottom:26px;text-align:center}
+.lg-logo{width:56px;height:56px;border-radius:16px;display:grid;place-items:center;font-size:28px;
+  background:color-mix(in srgb,var(--accent) 18%,var(--panel2,var(--panel)));border:1px solid color-mix(in srgb,var(--accent) 45%,var(--border))}
+.lg-name{font-size:24px;font-weight:800;letter-spacing:-.01em;margin-top:6px;word-break:break-word}
+.lg-sub{font-size:13px;color:var(--muted,#8a93ad)}
+label{display:block;font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--muted,#8a93ad);margin:16px 0 6px}
+.fld{position:relative}
+.fld input[type=text],.fld input[type=password]{width:100%;height:44px;padding:0 14px;border-radius:10px;border:1px solid var(--border);background:var(--panel2,var(--bg));
+  color:var(--text);font:inherit;font-size:15px;outline:none;transition:border-color .15s,box-shadow .15s}
+.fld input:focus{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 25%,transparent)}
+.fld input[type=password]{padding-right:46px}
+button.eye{box-shadow:none;position:absolute;right:4px;top:4px;width:36px;height:36px;border:0;border-radius:8px;background:none;color:var(--muted,#8a93ad);cursor:pointer;font-size:16px}
+button.eye:hover{color:var(--text);background:color-mix(in srgb,var(--text) 8%,transparent)}
+.rem{display:flex;align-items:center;gap:8px;margin:16px 0 0;font-size:13px;color:var(--muted,#8a93ad);text-transform:none;letter-spacing:0;font-weight:500}
+.rem input{accent-color:var(--accent);width:16px;height:16px;margin:0}
+.err{min-height:20px;margin:14px 0 0;font-size:13px;color:var(--red);font-weight:600}
+.caps{display:none;font-size:12px;color:var(--orange);margin-top:6px}
+button.go{width:100%;height:46px;margin-top:6px;border:0;border-radius:10px;background:var(--accent);color:#fff;font:inherit;font-size:15px;font-weight:700;cursor:pointer;
+  transition:filter .15s,transform .05s}
+button.go:hover{filter:brightness(1.08)} button.go:active{transform:translateY(1px)} button.go[disabled]{opacity:.65;cursor:wait}
+.lg-foot{margin-top:20px;text-align:center;font-size:12px;color:var(--muted,#8a93ad)}
+.shake{animation:shk .35s}
+@keyframes shk{20%,60%{transform:translateX(-6px)}40%,80%{transform:translateX(6px)}}
+@media (prefers-reduced-motion:reduce){.shake{animation:none}}
+[data-theme="grafana"] body{background-image:none}
+[data-theme="grafana"] .lg{border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,.12)}
+[data-theme="grafana"] .lg-logo{border-radius:4px}
+</style>
+</head>
+<body>
+<main class="lg">
+  <div class="lg-brand">
+    <div class="lg-logo" aria-hidden="true">🛰</div>
+    <div class="lg-name" id="appName">NetNOC</div>
+    <div class="lg-sub">Monitoramento de Rede</div>
+  </div>
+  <form id="f" autocomplete="on" novalidate>
+    <label for="u">Usuário</label>
+    <div class="fld"><input type="text" id="u" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus></div>
+    <label for="p">Senha</label>
+    <div class="fld"><input type="password" id="p" name="password" autocomplete="current-password" required>
+      <button type="button" class="eye" id="eye" aria-label="Mostrar senha" title="Mostrar/ocultar senha">👁</button></div>
+    <div class="caps" id="caps">⇪ Caps Lock ligado</div>
+    <label class="rem"><input type="checkbox" id="rem"> Manter conectado por 30 dias</label>
+    <div class="err" id="err" role="alert" aria-live="polite"></div>
+    <button class="go" id="go" type="submit">Entrar</button>
+  </form>
+  <div class="lg-foot" id="ver"></div>
+</main>
+<script src="login.js"></script>
+</body>
+</html>

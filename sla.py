@@ -66,11 +66,11 @@ def _safe(v):
     return v
 
 
-def to_csv(rep):
+def to_csv(rep, app="NetNOC"):
     buf = io.StringIO()
     w = csv.writer(buf, delimiter=";")
     f = lambda ts: datetime.datetime.fromtimestamp(ts).strftime("%d/%m/%Y %H:%M")
-    w.writerow(["Relatório SLA NetNOC", f(rep["start"]), f(rep["end"])])
+    w.writerow([f"Relatório SLA {_safe(app)}", f(rep["start"]), f(rep["end"])])
     w.writerow(["Alvo", "Disponibilidade %", "Amostras", "Latência média ms", "Latência máx ms",
                 "Jitter médio ms", "Quedas", "Tempo fora (s)", "MTTR (s)", "MTBF (s)"])
     for t in rep["targets"]:

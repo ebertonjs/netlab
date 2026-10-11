@@ -1,0 +1,14 @@
+[Unit]
+Description=NetNOC
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=seu_usuario
+WorkingDirectory=/home/seu_usuario/netlab
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/seu_usuario/netlab/venv/bin/python -m uvicorn main:app --host 0.0.0.0 --port 8000
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

@@ -29,6 +29,14 @@ _DEFAULTS = {
 }
 
 
+def _app():
+    try:
+        import monitor
+        return monitor.get_app_name()
+    except Exception:
+        return "NetNOC"
+
+
 def get_config():
     try:
         raw = json.loads(db.get_setting("notify", "{}") or "{}")
@@ -131,7 +139,7 @@ def in_maintenance(target=None, now=None):
 def _send_discord(cfg, sev, text, target):
     color = {"Alta": 0xFF5C5C, "Media": 0xFFB23D, "Baixa": 0x4D8DFF, "Info": 0x8A63FF}.get(sev, 0x8A63FF)
     r = requests.post(cfg["discord"]["webhook_url"], timeout=6,
-                      json={"embeds": [{"title": f"NetNOC — {sev}", "description": text[:1900], "color": color}]})
+                      json={"embeds": [{"title": f"{_app()} — {sev}", "description": text[:1900], "color": color}]})
     r.raise_for_status()
 
 
@@ -149,7 +157,7 @@ def _send_webhook(cfg, sev, text, target, kind):
 def _send_email(cfg, sev, text, target):
     e = cfg["email"]
     msg = EmailMessage()
-    msg["Subject"] = f"[NetNOC {sev}] {text.splitlines()[-1][:80] if text else ''}".replace("\n", " ")
+    msg["Subject"] = f"[{_app()} {sev}] {text.splitlines()[-1][:80] if text else ''}".replace("\n", " ")
     msg["From"] = e["sender"]
     msg["To"] = e["to"]
     msg.set_content(text)

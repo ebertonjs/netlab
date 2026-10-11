@@ -1,0 +1,80 @@
+/* Tema "Grafana": fundo claro, menu escuro, painéis brancos e blocos de status coloridos.
+   Só vale com data-theme="grafana"; os outros temas não são afetados. */
+[data-theme="grafana"]{
+  --bg:#f4f5f5; --panel:#ffffff; --panel2:#f1f2f4; --border:#dcdfe3;
+  --text:#202226; --muted:#5f6670;
+  --green:#2f9e44; --red:#d6455d; --orange:#e08a1e; --blue:#3274d9; --purple:#8e5bd0;
+  --accent:#3274d9;
+}
+[data-theme="grafana"] body{background:var(--bg);color:var(--text)}
+[data-theme="grafana"] .content{background:var(--bg)}
+/* menu lateral escuro */
+[data-theme="grafana"] .sidebar{--bg:#111217;--panel:#181b1f;--panel2:#22252b;--border:#2c3036;--text:#d8d9da;--muted:#9aa0a8;--accent:#ff7a1a;background:#181b1f;border-right:1px solid #2c3036}
+[data-theme="grafana"] .sidebar::after{display:none}
+[data-theme="grafana"] .sidebar .brand-row .brand{background:none;-webkit-text-fill-color:#fff;color:#fff}
+[data-theme="grafana"] .sidebar .brand .ic{color:#ff7a1a}
+[data-theme="grafana"] .sidebar nav a.active{background:rgba(255,255,255,.07);color:#fff;box-shadow:inset 3px 0 0 #ff7a1a;border-radius:4px}
+[data-theme="grafana"] .sidebar nav a:not(.active):hover{background:rgba(255,255,255,.05);color:#fff}
+[data-theme="grafana"] .sidebar .danger-btn{border-color:#3a3f47;color:#ff7b86}
+[data-theme="grafana"] .sidebar .version-badge{background:#22252b;color:#9aa0a8;border-color:#2c3036}
+/* painéis */
+[data-theme="grafana"] .card,[data-theme="grafana"] .widget,[data-theme="grafana"] .panel{border-radius:4px;box-shadow:none;background:#fff;border:1px solid var(--border)}
+[data-theme="grafana"] .topbar h1{font-size:18px;font-weight:500}
+[data-theme="grafana"] select,[data-theme="grafana"] input,[data-theme="grafana"] textarea{background:#fff;color:var(--text);border-color:#c7ccd2;border-radius:3px}
+[data-theme="grafana"] .status-pill.online{color:#146c2e}
+[data-theme="grafana"] .status-pill.offline{color:#a3283d}
+[data-theme="grafana"] .live-chip.on{color:#146c2e;border-color:#146c2e}
+[data-theme="grafana"] .hint,[data-theme="grafana"] .data-table th{color:#5f6670}
+[data-theme="grafana"] .sys-panel{background:#22252b;border-color:#2c3036}
+[data-theme="grafana"] .sidebar .sys-row{color:#c9ccd1}
+
+/* ---- Mission Control no estilo Grafana ---- */
+[data-theme="grafana"] .mc{--mbg:#f4f5f5;--mp:#ffffff;--mb:#dcdfe3;--mt:#202226;--mm:#5f6670;--mc:#3274d9;--mg:#2f9e44;--ma:#d97f0a;--mr:#d6455d;
+  background:transparent;border:0;border-radius:0;padding:0;overflow:visible}
+[data-theme="grafana"] .mc-card,[data-theme="grafana"] .mc-t,[data-theme="grafana"] .mc-kpi{backdrop-filter:none;border-radius:4px;box-shadow:none}
+[data-theme="grafana"] .mc-card{background:#fff;border:1px solid #dcdfe3}
+[data-theme="grafana"] .mc-lab{color:#202226;font-size:14px;font-weight:500;letter-spacing:0;text-transform:none}
+[data-theme="grafana"] .mc-card .mc-lab{color:#202226}
+[data-theme="grafana"] .mc-pill{background:#fff;color:#5f6670;border-color:#dcdfe3;letter-spacing:.04em;border-radius:3px}
+[data-theme="grafana"] .mc-clock b{color:#202226}
+[data-theme="grafana"] .mc-clock small{color:#5f6670}
+/* blocos de status coloridos */
+[data-theme="grafana"] .mc-kpi{border:0;color:#fff;min-height:96px;justify-content:center;background:linear-gradient(135deg,#6cc070,#46a24d)}
+[data-theme="grafana"] .mc-kpi .mc-lab{color:rgba(255,255,255,.92);font-size:13px}
+[data-theme="grafana"] .mc-kpi b,[data-theme="grafana"] .mc-kpi b.mc-ok,[data-theme="grafana"] .mc-kpi b.mc-warn,[data-theme="grafana"] .mc-kpi b.mc-bad,[data-theme="grafana"] .mc-kpi b.mc-na,[data-theme="grafana"] .mc-kpi b.mc-ip{color:#fff;font-weight:600}
+[data-theme="grafana"] .mc-kpi small{color:rgba(255,255,255,.88)}
+[data-theme="grafana"] .mc-kpi:has(b.mc-warn){background:linear-gradient(135deg,#f3b24a,#e08a1e)}
+[data-theme="grafana"] .mc-kpi:has(b.mc-bad){background:linear-gradient(135deg,#f0566e,#d6314f)}
+[data-theme="grafana"] .mc-kpi:has(b.mc-na){background:linear-gradient(135deg,#8b929c,#6d747e)}
+[data-theme="grafana"] .mc-kpi:has(b.mc-ip){background:linear-gradient(135deg,#5b95e8,#3274d9)}
+/* texto nas cores de estado sobre fundo branco */
+[data-theme="grafana"] .mc .mc-ok{color:#2f9e44} [data-theme="grafana"] .mc .mc-warn{color:#c76f00} [data-theme="grafana"] .mc .mc-bad{color:#d6455d}
+[data-theme="grafana"] .mc-kpi b.mc-ok,[data-theme="grafana"] .mc-kpi b.mc-warn,[data-theme="grafana"] .mc-kpi b.mc-bad{color:#fff}
+[data-theme="grafana"] .mc-sub{background:#f4f5f5;border-color:#dcdfe3}
+[data-theme="grafana"] .mc-note{color:#3274d9}
+[data-theme="grafana"] .mc-bar{background:#e6e8eb}
+[data-theme="grafana"] .mc-inc{border-color:#e6e8eb}
+[data-theme="grafana"] .mc-inc b{color:#202226}
+[data-theme="grafana"] .mc-row,[data-theme="grafana"] .mc-site,[data-theme="grafana"] .mc-toprow{border-color:#e6e8eb}
+[data-theme="grafana"] .mc-dots i.na{background:#d5d8dd}
+[data-theme="grafana"] .mc-photo img{border:1px solid #dcdfe3}
+[data-theme="grafana"] .mc-tx{color:#3274d9}
+[data-theme="grafana"] .mc-stats3 b{color:#202226}
+[data-theme="grafana"] .mc-ac{background:#fff}
+[data-theme="grafana"] .mc-ac.bad{background:linear-gradient(180deg,rgba(214,69,93,.12),#fff);box-shadow:none;border-color:#d6455d}
+[data-theme="grafana"] .mc-ac.warn{background:linear-gradient(180deg,rgba(224,138,30,.14),#fff);border-color:#e08a1e}
+[data-theme="grafana"] .mc-ac .mc-tn{color:#202226} [data-theme="grafana"] .mc-ac.bad .mc-tn{color:#d6455d} [data-theme="grafana"] .mc-ac.warn .mc-tn{color:#c76f00}
+[data-theme="grafana"] .mc-allok{color:#2f9e44}
+/* radar: textos e pontos claros sobre fundo branco */
+[data-theme="grafana"] .mc-radar-svg text[fill="#e6edf9"]{fill:#202226}
+[data-theme="grafana"] .mc-radar-svg text[fill="#7d8aa8"]{fill:#6b7280}
+[data-theme="grafana"] .mc-radar-svg circle[fill="#06121a"]{fill:#fff}
+[data-theme="grafana"] .mc-radar-svg circle[fill="#2a0e14"]{fill:#fff}
+[data-theme="grafana"] .mc-radar-svg circle[fill="#071a2a"]{fill:#fff}
+[data-theme="grafana"] .mc-radar-svg circle[stroke="rgba(90,150,255,.18)"]{stroke:#d3d7dd}
+[data-theme="grafana"] .mc-radar-svg line[stroke="rgba(90,150,255,.07)"]{stroke:#e3e6ea}
+[data-theme="grafana"] .mc-radar-svg text[fill="#35e0ff"]{fill:#3274d9}
+[data-theme="grafana"] .mc-radar-svg circle[stroke="#35e0ff"]{stroke:#3274d9}
+[data-theme="grafana"] .mc-ring circle[stroke="rgba(90,150,255,.14)"],[data-theme="grafana"] .mc-ring circle[stroke="rgba(90,150,255,.10)"]{stroke:#e6e8eb}
+[data-theme="grafana"] .mc-spd-c .u,[data-theme="grafana"] .mc-agh-line polyline{stroke:#3274d9}
+[data-theme="grafana"] .mc-card:before,[data-theme="grafana"] .mc-card:after{display:none}

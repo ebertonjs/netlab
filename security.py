@@ -241,9 +241,62 @@ def check_token(setting_key, token):
     return bool(stored and token and hmac.compare_digest(stored, token_hash(token)))
 
 
+# ------------------------------------------------------------- sessão (cookie)
+SESSION_COOKIE = "netnoc_session"
+SESSION_TTL = 12 * 3600
+SESSION_TTL_LONG = 30 * 86400
+
+
+def _session_key():
+    k = db.get_setting("session_secret", "")
+    if not k:
+        k = secrets.token_hex(32)
+        db.set_setting("session_secret", k)
+    return k.encode()
+
+
+def _fp(user):
+    u = _users().get(user) or {}
+    return hashlib.sha256((u.get("hash") or "").encode()).hexdigest()[:10]
+
+
+def make_session(user, ttl=SESSION_TTL):
+    body = base64.urlsafe_b64encode(json.dumps(
+        {"u": user, "e": int(time.time() + ttl), "f": _fp(user)}, separators=(",", ":")).encode()).decode().rstrip("=")
+    sig = hmac.new(_session_key(), body.encode(), hashlib.sha256).hexdigest()
+    return body + "." + sig
+
+
+def parse_session(token):
+    """Retorna (user, role) ou None. Trocar a senha ou remover o usuário invalida a sessão."""
+    try:
+        body, sig = token.split(".", 1)
+        calc = hmac.new(_session_key(), body.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(calc, sig):
+            return None
+        d = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
+        if d.get("e", 0) < time.time():
+            return None
+        u = _users().get(d.get("u"))
+        if not u or d.get("f") != _fp(d["u"]):
+            return None
+        return d["u"], u.get("role", "viewer")
+    except Exception:
+        return None
+
+
+def _cookie_from(hdr):
+    for part in (hdr or "").split(";"):
+        k, _, v = part.strip().partition("=")
+        if k == SESSION_COOKIE:
+            return v
+    return ""
+
+
 # ---------------------------------------------------------------- middleware
 AUTH_OFF = os.environ.get("NETNOC_AUTH", "on").lower() == "off"
 PUBLIC_PATHS = {"/healthz", "/status", "/status.html", "/status.js", "/api/public/status",
+                "/login", "/login.js", "/api/login", "/api/loginfo", "/style.css", "/theme-grafana.css",
                 "/manifest.webmanifest", "/sw.js", "/icon-192.png", "/icon-512.png", "/favicon.ico"}
 AGENT_PREFIX = "/api/agent/"
 METRICS_PATH = "/metrics"
@@ -310,7 +363,10 @@ class AuthMiddleware:
                                          [(b"retry-after", b"600")])
             auth = hdrs.get("authorization", "")
             role = None
-            if auth.startswith("Basic "):
+            sess = parse_session(_cookie_from(hdrs.get("cookie", ""))) if SESSION_COOKIE in hdrs.get("cookie", "") else None
+            if sess:
+                user, role = sess
+            elif auth.startswith("Basic "):
                 try:
                     u, _, p = base64.b64decode(auth[6:]).decode().partition(":")
                     role = verify(u, p)
@@ -320,9 +376,16 @@ class AuthMiddleware:
                 except Exception:
                     register_fail(client)
             if role is None:
-                return await _send_plain(
-                    send, 401, '{"detail":"Autenticação necessária"}',
-                    [(b"www-authenticate", b'Basic realm="NetNOC", charset="UTF-8"')])
+                browser = "sec-fetch-mode" in hdrs
+                if (browser and method == "GET" and not path.startswith("/api/")
+                        and hdrs.get("sec-fetch-mode") == "navigate"):
+                    from urllib.parse import quote
+                    nxt = quote(path + ("?" + scope["query_string"].decode() if scope.get("query_string") else ""), safe="/?=&")
+                    return await _send_plain(send, 302, b"", [(b"location", b"/login?next=" + nxt.encode()),
+                                                              (b"cache-control", b"no-store")])
+                # navegadores: sem desafio Basic (o front redireciona para /login); curl/agentes continuam com Basic
+                extra = [] if (browser or "x-netnoc" in hdrs) else [(b"www-authenticate", b'Basic realm="NetNOC", charset="UTF-8"')]
+                return await _send_plain(send, 401, '{"detail":"Autenticação necessária"}', extra)
         # CSRF: mutações exigem cabeçalho customizado + origem igual
         if method in ADMIN_ONLY_METHODS:
             if hdrs.get("x-netnoc") != "1":

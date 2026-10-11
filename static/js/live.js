@@ -12,7 +12,7 @@
 
   function notify(inc) {
     if (!('Notification' in window) || Notification.permission !== 'granted') return;
-    const title = 'NetNOC — ' + inc.severity;
+    const title = (window.APP_NAME || 'NetNOC') + ' — ' + inc.severity;
     const opts = {body: inc.message, tag: 'inc-' + inc.id, icon: '/icon-192.png'};
     if (navigator.serviceWorker && navigator.serviceWorker.ready) {
       navigator.serviceWorker.ready.then(r => r.showNotification(title, opts)).catch(() => { try { new Notification(title, opts); } catch (e) { /* ok */ } });
@@ -56,7 +56,9 @@
         }}),
       h('button', {type: 'button', id: 'tvBtn', class: 'icon-btn', title: 'Modo TV / Wallboard', 'aria-label': 'Modo TV', text: '📺',
         onclick: () => window.NetnocWall && window.NetnocWall.toggle()}),
-      h('span', {id: 'userChip', class: 'user-chip', text: ''}));
+      h('span', {id: 'userChip', class: 'user-chip', text: ''}),
+      h('button', {type: 'button', id: 'logoutBtn', class: 'icon-btn', title: 'Sair', 'aria-label': 'Sair', text: '⎋',
+        onclick: async () => { try { await fetch('/api/logout', {method: 'POST'}); } catch (e) { /* ok */ } location.replace('/login'); }}));
     const sel = document.getElementById('themeSelect');
     sel.after(tools);
   }

@@ -1,4 +1,5 @@
 // NetNOC — utilitários de segurança do frontend (carregado antes de tudo)
+try{ window.APP_NAME = localStorage.getItem('netnoc_app_name') || 'NetNOC'; }catch(_){ window.APP_NAME = 'NetNOC'; }
 (function () {
   const MAP = {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;', '`': '&#96;'};
   window.esc = function (v) {
@@ -13,7 +14,13 @@
       opts.headers = Object.assign({}, opts.headers || {}, {'X-NetNOC': '1'});
     }
     opts.credentials = opts.credentials || 'same-origin';
-    return orig(url, opts);
+    return orig(url, opts).then(r => {
+      // sessão expirada: volta para a tela de login
+      if (r.status === 401 && !/\/api\/(login|logout)/.test(String(url)) && location.pathname !== '/login') {
+        location.replace('/login?next=' + encodeURIComponent(location.pathname + location.search + location.hash));
+      }
+      return r;
+    });
   };
   // mini gráfico SVG (apenas números -> seguro)
   window.sparkSvg = function (vals, w, h) {

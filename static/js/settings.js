@@ -99,7 +99,11 @@ document.getElementById('formDns').addEventListener('submit', async (e) => {
 });
 
 function applyAppName(name, version){
+  window.APP_NAME = name;
+  try{ localStorage.setItem('netnoc_app_name', name); }catch(_){ /* ok */ }
   document.title = `${name} - Monitoramento de Rede`;
+  document.querySelectorAll('[data-appname]').forEach(el => { el.textContent = name; });
+  document.dispatchEvent(new CustomEvent('netnoc:appname', {detail: name}));
   document.getElementById('brandName').textContent = `🛰 ${name}`;
   if(version){
     document.getElementById('brandVersion').textContent = `v${version}`;
@@ -222,9 +226,15 @@ document.getElementById('formTelegram').addEventListener('submit', async (e) => 
     enabled, bot_token, chat_id,
     min_severity: f.get('min_severity')
   };
-  await fetch('/api/settings/telegram', {
+  const r = await fetch('/api/settings/telegram', {
     method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)
   });
+  if(!r.ok){
+    let msg = 'Não foi possível salvar o Telegram';
+    try{ const j = await r.json(); msg = typeof j.detail === 'string' ? j.detail : msg; }catch(_){ /* ok */ }
+    showToast(msg, 'error');
+    return;
+  }
   showToast('Configuração do Telegram salva.');
   await loadTelegramSettings();
 });
