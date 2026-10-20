@@ -1,0 +1,23 @@
+/* Login no visual glass da v3 (carregado depois do CSS clássico, sobrescreve) */
+html body {
+  background: radial-gradient(1000px 600px at 75% 10%, #2a2452, transparent 70%),
+    radial-gradient(800px 600px at 10% 90%, #1b2a52, transparent 70%), linear-gradient(160deg, #15142b, #2a2452);
+  background-size: auto; background-attachment: fixed; color: #eef0f8;
+}
+html body::after {
+  content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none; opacity: .5;
+  background: no-repeat center / 100% 100% url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1440 900' preserveAspectRatio='none'%3E%3Cg fill='none' stroke='%23a9b4ff' stroke-linecap='round'%3E%3Cpath d='M0 560 C 260 470 420 650 720 560 S 1180 430 1440 520' stroke-width='3' opacity='.5'/%3E%3Cpath d='M0 620 C 300 540 480 720 760 620 S 1200 490 1440 590' stroke-width='1.5' opacity='.35'/%3E%3C/g%3E%3C/svg%3E");
+}
+html body .lg {
+  background: rgba(44, 46, 74, .62); border: 1px solid rgba(255, 255, 255, .1); border-radius: 34px;
+  backdrop-filter: blur(24px) saturate(140%); -webkit-backdrop-filter: blur(24px) saturate(140%);
+  box-shadow: 0 24px 60px rgba(5, 6, 20, .5), inset 0 1px 0 rgba(255, 255, 255, .08);
+}
+html body .lg-logo { border-radius: 50%; background: radial-gradient(circle at 35% 30%, #ffc56b, #f59e2e); border: 0; box-shadow: 0 0 28px rgba(245, 158, 46, .5); }
+html body .lg-name { font-weight: 600; }
+html body .fld input[type=text], html body .fld input[type=password] {
+  border-radius: 14px; background: rgba(255, 255, 255, .08); border-color: rgba(255, 255, 255, .14); color: #eef0f8;
+}
+html body .fld input:focus { border-color: #4f8dff; box-shadow: 0 0 0 3px rgba(79, 141, 255, .25); }
+html body button.go { border-radius: 23px; background: #4f8dff; box-shadow: 0 0 24px rgba(79, 141, 255, .45); }
+html body label, html body .lg-sub, html body .lg-foot, html body .rem { color: #a8afc5; }

@@ -23,8 +23,8 @@ cd netlab
 **Opção B — arquivo ZIP**
 ```bash
 sudo apt-get install -y unzip
-unzip netnoc-v3.0-completo.zip
-cd netnoc
+unzip netlab-main.zip
+cd netlab-main
 ```
 
 ## 3. Instalar
@@ -34,7 +34,7 @@ chmod +x install.sh
 ./install.sh
 ```
 
-O script instala `gcc`, `python3-dev`, `python3-venv`, `snmp`, `traceroute`, `iputils-ping`, cria o ambiente virtual `venv/` e instala as bibliotecas Python. Na Raspberry Pi leva alguns minutos (compilação do `psutil`).
+O script instala `gcc`, `python3-dev`, `python3-venv`, `snmp`, `traceroute`, `iputils-ping`, baixa o **go2rtc** (vídeo das câmeras) para a sua arquitetura, cria o ambiente virtual `venv/` e instala as bibliotecas Python. Rode **sem** `sudo`: o script pede a senha só quando precisa. Na Raspberry Pi leva alguns minutos (compilação do `psutil`).
 
 > Prefere instalar à mão? Veja "Instalação manual" no `README.md`.
 
@@ -80,17 +80,26 @@ Entre em **Configurações** e faça, nesta ordem:
 1. **Nome da aplicação** — o nome aparece no menu, login, Modo TV, alertas e relatórios.
 2. **Destinos** — cadastre o que monitorar (ICMP, TCP ou HTTP). Use *alvo pai* para evitar alertas em cascata.
 3. **Telegram** (alertas): crie o bot no `@BotFather`, copie o token; descubra seu *chat id* com `@userinfobot`. Preencha, salve e clique em **Enviar teste**. Discord, webhook e e-mail ficam em **Notificações**.
-4. **Equipamentos** (opcional): MikroTik (RouterOS v7), AdGuard Home, SNMP, Zabbix.
-5. **Tema**: seletor no topo (Azul, Verde, Roxo, OLED, Claro, Grafana ou Personalizado).
+4. **Integrações** (opcional): MikroTik (RouterOS v7), AdGuard Home, DVR Intelbras, SNMP, Zabbix.
+5. **Aparência**: tema (Glass, NOC Terminal, Grafana/Zabbix ou Material You), modo, cor e tamanho da interface.
 6. **Usuários**: em **Segurança**, crie usuários só de leitura para a equipe e **troque a senha do admin**.
 
 ## 7. Modo TV (monitor na parede)
 
-Clique em 📺 ou abra `http://IP:8000/#tv`. Teclas: `← →` trocam de cena, `1-4` vão direto, `espaço` pausa, `A` dispensa alerta, `S` som, `F` tela cheia, `Esc` sai. Parâmetros na URL: `#tv?cenas=1,2&tempo=20`.
+Clique em 📺 ou abra `http://IP:8000/#tv`. Teclas: `← →` trocam de cena, `espaço` pausa, `A` dispensa alerta, `S` som, `F` tela cheia, `Esc` sai. Parâmetros na URL: `#tv?cenas=1,2,5&tempo=20` (cena 5 = câmeras).
 
 Em TV/Raspberry dedicada, o login é feito uma vez com "Manter conectado".
 
-## 8. Acesso seguro de fora (HTTPS)
+## 8. Câmeras (DVR Intelbras)
+
+Em **Configurações → Integrações → DVR**: IP do DVR, usuário (de preferência só de visualização), senha, porta HTTP (80) e RTSP (554). Clique em **Salvar e testar**.
+
+- O vídeo ao vivo só roda enquanto alguém está na tela de Câmeras (ou na cena 5 do Modo TV).
+- Os streams precisam estar em **H.264** (*Câmera → Codificação* no DVR); navegadores não tocam H.265.
+- Se as consultas do teste voltarem `HTTP 404`, habilite o **CGI** nos serviços de rede do DVR (fotos, nomes e eventos). O vídeo usa só o RTSP.
+- Se o go2rtc não foi baixado na instalação, rode `./install.sh` de novo ou coloque o binário em `bin/go2rtc`.
+
+## 9. Acesso seguro de fora (HTTPS)
 
 Não exponha a porta 8000 direto na internet. Use um proxy com HTTPS na frente.
 
@@ -110,13 +119,16 @@ location / {
     proxy_set_header X-Forwarded-Proto $scheme;
     proxy_set_header X-Forwarded-For $remote_addr;
     proxy_buffering off;          # necessário para o tempo real (SSE)
+    proxy_http_version 1.1;       # vídeo das câmeras (WebSocket)
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
 }
 ```
 Com o proxy, rode o uvicorn só local: troque `--host 0.0.0.0` por `--host 127.0.0.1` no serviço.
 
 Alternativas sem abrir portas: Tailscale ou WireGuard.
 
-## 9. Backup (importante)
+## 10. Backup (importante)
 
 Guarde sempre **os dois** arquivos: `netnoc.db` (dados) e `netnoc.key` (chave dos segredos). Sem a chave, tokens e senhas salvos não abrem.
 ```bash
@@ -126,7 +138,7 @@ sudo systemctl start netnoc
 ```
 Também há backup/restauração pela interface (sem segredos).
 
-## 10. Atualizar para uma versão nova
+## 11. Atualizar para uma versão nova
 
 ```bash
 sudo systemctl stop netnoc
@@ -138,7 +150,7 @@ sudo systemctl start netnoc
 ```
 No navegador, `Ctrl+F5` uma vez. O banco migra sozinho.
 
-## 11. Problemas comuns
+## 12. Problemas comuns
 
 | Sintoma | Solução |
 |---|---|
@@ -150,11 +162,13 @@ No navegador, `Ctrl+F5` uma vez. O banco migra sozinho.
 | Ping sem resposta no Docker/VM | O equipamento precisa de permissão para ICMP e rota até o alvo |
 | Telegram não envia | Use **Enviar teste**; confira token, chat id e se falou `/start` com o bot |
 | Mudei o tema/nome e não mudou | `Ctrl+F5` (cache do PWA) |
+| Câmeras ficam em "reconectando" | Procure `cam/ws` nos logs (`journalctl -u netnoc`); atrás de proxy, habilite WebSocket (seção 9) |
+| Teste do DVR com `HTTP 404` | Habilite o CGI no DVR; o vídeo ao vivo usa só o RTSP |
 | Sessão caiu / volta ao login | Sessão de 12 h (30 dias com "manter conectado"); trocar a senha encerra as sessões |
 
-## 12. Desinstalar
+## 13. Desinstalar
 
 ```bash
 sudo systemctl disable --now netnoc && sudo rm /etc/systemd/system/netnoc.service
-cd .. && rm -rf netnoc        # apaga também dados e chave: faça backup antes
+cd .. && rm -rf netlab        # apaga também dados e chave: faça backup antes
 ```

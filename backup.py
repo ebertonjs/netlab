@@ -2,6 +2,7 @@
 são mantidos os atuais quando o destino (host/url/usuário) não mudou, senão ficam em branco."""
 import json, time
 import db
+import dvr
 import monitor
 import notifier
 import security
@@ -17,8 +18,9 @@ SECRET_MAP = {
     "mikrotik": (("password",), ("host", "port", "username", "use_https")),
     "agh": (("password",), ("host", "port", "username", "use_https")),
     "zabbix": (("token",), ("url",)),
+    "dvr": (("password",), ("host", "http_port", "rtsp_port", "username")),
 }
-PLAIN = ("targets", "dns_servers", "intervals", "app_name", "maintenance")
+PLAIN = ("targets", "dns_servers", "intervals", "app_name", "maintenance", "ui_default")
 
 
 def export_cfg():
@@ -28,7 +30,7 @@ def export_cfg():
         if raw is not None:
             out[k] = raw if k == "app_name" else json.loads(raw)
     cfgs = {"telegram": monitor.get_telegram(), "mikrotik": monitor.get_mikrotik(),
-            "agh": monitor.get_agh(), "zabbix": zabbix.get_cfg()}
+            "agh": monitor.get_agh(), "zabbix": zabbix.get_cfg(), "dvr": dvr.get_cfg()}
     for k, (secrets_, _) in SECRET_MAP.items():
         c = dict(cfgs[k])
         for f in secrets_:
@@ -77,6 +79,17 @@ def _validate(data):
                 raise BackupError(f"targets: host inválido em {n}")
             if t.get("type") == "tcp" and not security.valid_port(t.get("port")):
                 raise BackupError(f"targets: porta inválida em {n}")
+            if t.get("type", "icmp") not in ("icmp", "tcp", "http", "agent"):
+                raise BackupError(f"targets: tipo inválido em {n}")
+            iv = t.get("interval")
+            if iv is not None and (not isinstance(iv, int) or not 2 <= iv <= 3600):
+                raise BackupError(f"targets: intervalo inválido em {n}")
+            st = t.get("expect_status")
+            if st is not None and (not isinstance(st, int) or not 100 <= st <= 599):
+                raise BackupError(f"targets: status HTTP inválido em {n}")
+            sites_ = t.get("sites") or []
+            if not isinstance(sites_, list) or any(not security.valid_name(x, 40) or "@" in x for x in sites_):
+                raise BackupError(f"targets: sites inválidos em {n}")
             if n in names:
                 raise BackupError(f"targets: nome duplicado {n}")
             names.add(n)
@@ -101,6 +114,15 @@ def _validate(data):
                     raise BackupError(f"intervals: {k} inválido")
                 clean[k] = v
         out["intervals"] = clean
+    if "ui_default" in s:
+        u = s["ui_default"]
+        skins = {"glass": ("dark", "light"), "terminal": ("verde", "ambar", "ciano"),
+                 "grafana": ("dark", "light"), "material": ("light", "dark")}
+        import re as _re
+        if not isinstance(u, dict) or u.get("skin") not in skins or u.get("mode") not in skins[u["skin"]] or \
+                not _re.fullmatch(r"#[0-9a-fA-F]{6}", str(u.get("accent", "#6750a4"))):
+            raise BackupError("ui_default: tema inválido")
+        out["ui_default"] = {"skin": u["skin"], "mode": u["mode"], "accent": str(u.get("accent", "#6750a4")).lower()}
     if "app_name" in s:
         if not isinstance(s["app_name"], str) or not security.valid_name(s["app_name"], 40):
             raise BackupError("app_name inválido")
@@ -111,17 +133,18 @@ def _validate(data):
             raise BackupError("maintenance: formato inválido")
         for m in ms:
             if not isinstance(m, dict) or not security.valid_name(m.get("name") or "") or \
-                    not isinstance(m.get("start"), (int, float)) or not isinstance(m.get("end"), (int, float)):
+                    not isinstance(m.get("start"), (int, float)) or not isinstance(m.get("end"), (int, float)) or \
+                    m["end"] <= m["start"]:
                 raise BackupError("maintenance: item inválido")
             m.setdefault("id", str(int(m["start"])))
             m["targets"] = [str(x) for x in (m.get("targets") or [])]
         out["maintenance"] = ms
-    for k in ("telegram", "mikrotik", "agh", "zabbix"):
+    for k in ("telegram", "mikrotik", "agh", "zabbix", "dvr"):
         if k in s:
             c = s[k]
             if not isinstance(c, dict):
                 raise BackupError(f"{k}: formato inválido")
-            if k in ("mikrotik", "agh") and c.get("host") and not security.valid_host(c["host"]):
+            if k in ("mikrotik", "agh", "dvr") and c.get("host") and not security.valid_host(c["host"]):
                 raise BackupError(f"{k}: host inválido")
             if k == "zabbix" and c.get("url") and not security.valid_url(c["url"]):
                 raise BackupError("zabbix: url inválida")
@@ -130,6 +153,16 @@ def _validate(data):
         n = s["notify"]
         if not isinstance(n, dict):
             raise BackupError("notify: formato inválido")
+        if n.get("min_severity", "Alta") not in notifier.SEV:
+            raise BackupError("notify: severidade inválida")
+        w = n.get("webhook") or {}
+        if not isinstance(w, dict) or (w.get("url") and not security.valid_url(w["url"])):
+            raise BackupError("notify: URL do webhook inválida")
+        e = n.get("email") or {}
+        if not isinstance(e, dict) or (e.get("host") and not security.valid_host(e["host"])):
+            raise BackupError("notify: servidor SMTP inválido")
+        if e.get("port") not in (None, "") and not security.valid_port(e.get("port")):
+            raise BackupError("notify: porta SMTP inválida")
         out["notify"] = n
     if "snmp_devices" in s:
         sd = s["snmp_devices"]
@@ -148,13 +181,13 @@ def import_cfg(data):
     norm = _validate(data)           # 400 antes de tocar no banco
     applied = []
     cur = {"telegram": monitor.get_telegram(), "mikrotik": monitor.get_mikrotik(),
-           "agh": monitor.get_agh(), "zabbix": zabbix.get_cfg()}
+           "agh": monitor.get_agh(), "zabbix": zabbix.get_cfg(), "dvr": dvr.get_cfg()}
     for k in PLAIN:
         if k in norm:
             db.set_setting(k, norm[k] if k == "app_name" else json.dumps(norm[k]))
             applied.append(k)
     monitor._invalidate_targets()
-    for k in ("telegram", "mikrotik", "agh", "zabbix"):
+    for k in ("telegram", "mikrotik", "agh", "zabbix", "dvr"):
         if k in norm:
             new = dict(cur[k])
             new.update(norm[k])

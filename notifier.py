@@ -181,7 +181,20 @@ def _send_email(cfg, sev, text, target):
 
 def _telegram(text):
     import monitor
-    return monitor.send_telegram(text)
+    if not monitor.send_telegram(text):
+        raise RuntimeError("Telegram: " + (monitor.telegram_last_error() or "falha no envio"))
+    return True
+
+
+def _safe_err(ex):
+    """Erro legível SEM a URL: str() de exceções do requests inclui a URL do webhook (= segredo)."""
+    if isinstance(ex, requests.HTTPError) and ex.response is not None:
+        return f"HTTP {ex.response.status_code}"
+    if isinstance(ex, requests.RequestException):
+        return type(ex).__name__
+    if isinstance(ex, smtplib.SMTPException):
+        return f"SMTP {type(ex).__name__}"
+    return str(ex)[:160]
 
 
 CHANNELS = ("telegram", "discord", "webhook", "email")
@@ -191,8 +204,7 @@ def send_channel(ch, sev, text, target=None, kind="incident"):
     """Envia (síncrono) por um canal. Levanta exceção em falha — usado nos botões de teste."""
     cfg = get_config()
     if ch == "telegram":
-        if not _telegram(text):
-            raise RuntimeError("Telegram: falha no envio")
+        _telegram(text)
     elif ch == "discord":
         _send_discord(cfg, sev, text, target)
     elif ch == "webhook":
@@ -228,7 +240,7 @@ def _worker():
                     except Exception as ex:
                         if attempt == 1:
                             db.execute("INSERT INTO events(ts,message,severity) VALUES(?,?,?)",
-                                       (time.time(), f"Falha ao notificar via {ch}: {str(ex)[:120]}", "Baixa"))
+                                       (time.time(), f"Falha ao notificar via {ch}: {_safe_err(ex)}", "Baixa"))
                         else:
                             time.sleep(2)
         except Exception:

@@ -72,6 +72,15 @@ def run_rollups(now=None):
     cache_clear()
 
 
+@ttl_cache(30)
+def _rollup5_end():
+    return _meta_f("rollup5_end")
+
+
+def _meta_f_cached():
+    return _rollup5_end()
+
+
 @ttl_cache(300)
 def _min5():
     r = db.query("SELECT MIN(bucket) m FROM pings_5m")
@@ -87,7 +96,13 @@ def rollup5_min():
 def _union(since, B, targets=None, raw_days=7):
     """SQL + params com colunas (target, b, n, ok, lat_sum, lat_max, jit_sum) em buckets de B s."""
     now = time.time()
-    b5 = int((now - raw_days * 86400) // 300) * 300      # raw a partir daqui
+    # bruto só na última hora (o resto vem do rollup de 5 min). Antes: 7 dias de bruto em
+    # toda consulta > 1 h (SLA 30d, página pública...) -> milhões de linhas com ping de 10 s.
+    r5 = _meta_f_cached()
+    b5 = int((now - 3600) // 300) * 300
+    if r5 is None or r5 < b5:
+        # rollup atrasado/inexistente: cai para o bruto onde ainda há bruto
+        b5 = int((now - raw_days * 86400) // 300) * 300 if r5 is None else max(int(r5), int((now - raw_days * 86400) // 300) * 300)
     m5 = rollup5_min()
     m5h = (int(-(-m5 // 3600)) * 3600) if m5 is not None else None   # 1h só antes disso
     tf = ""

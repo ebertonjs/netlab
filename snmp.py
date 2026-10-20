@@ -59,6 +59,11 @@ def validate_device(d, strict=True):
             raise ValueError("Protocolo de autenticação inválido")
         if d.get("priv_proto") not in (None, "", "DES", "AES", "AES-192", "AES-256"):
             raise ValueError("Protocolo de privacidade inválido")
+        for f in ("auth_pass", "priv_pass"):
+            v = d.get(f) or ""
+            # a senha vai para uma linha do snmp.conf: quebra de linha injetaria diretivas
+            if any(ch in v for ch in "\r\n\x00") or len(v) > 128:
+                raise ValueError("Senha SNMPv3 inválida")
     else:
         c = d.get("community", "")
         if strict and (not c or any(ch.isspace() for ch in c) or len(c) > 64):

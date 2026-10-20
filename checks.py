@@ -33,7 +33,7 @@ def http_probe(url, timeout=5.0, verify=True, expect=None):
     t0 = time.time()
     try:
         r = requests.get(url, timeout=timeout, verify=verify, allow_redirects=True, stream=True,
-                         headers={"User-Agent": "NetNOC/2.0"})
+                         headers={"User-Agent": "NetNOC/3.0"})
         ms = (time.time() - t0) * 1000
         r.close()
         if expect:
@@ -195,13 +195,11 @@ def _ping_once(ip):
 
 
 def _rdns(ip):
+    # (antes: socket.setdefaulttimeout global — não afeta gethostbyaddr e mudava o timeout das outras threads)
     try:
-        socket.setdefaulttimeout(1.0)
         return security.clean_name(socket.gethostbyaddr(ip)[0], 60)
     except Exception:
         return ""
-    finally:
-        socket.setdefaulttimeout(None)
 
 
 def start_discovery(cidr, known_hosts=()):

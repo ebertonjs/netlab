@@ -25,6 +25,31 @@ for pkg in snmp traceroute iputils-ping; do
   dpkg -s "$pkg" >/dev/null 2>&1 || { echo "Instalando $pkg..."; sudo apt-get install -y "$pkg" || true; }
 done
 
+# câmeras (DVR): go2rtc — repassa o vídeo do DVR ao navegador sem converter (leve até no Raspberry Pi 3)
+GO2RTC_VERSION="v1.9.14"
+if [ ! -x bin/go2rtc ]; then
+  case "$(uname -m)" in
+    aarch64|arm64) G2R=go2rtc_linux_arm64 ;;
+    armv7l|armv8l) G2R=go2rtc_linux_arm ;;
+    armv6l)        G2R=go2rtc_linux_armv6 ;;
+    x86_64)        G2R=go2rtc_linux_amd64 ;;
+    i386|i686)     G2R=go2rtc_linux_i386 ;;
+    *)             G2R="" ;;
+  esac
+  if [ -n "$G2R" ]; then
+    command -v curl >/dev/null 2>&1 || sudo apt-get install -y curl || true
+    echo "Baixando go2rtc $GO2RTC_VERSION ($G2R)..."
+    mkdir -p bin
+    if curl -fL --retry 3 -o bin/go2rtc.tmp "https://github.com/AlexxIT/go2rtc/releases/download/$GO2RTC_VERSION/$G2R"; then
+      chmod +x bin/go2rtc.tmp && mv bin/go2rtc.tmp bin/go2rtc && echo "go2rtc instalado em bin/go2rtc"
+    else
+      rm -f bin/go2rtc.tmp; echo "AVISO: não foi possível baixar o go2rtc (câmeras ao vivo ficam indisponíveis; fotos continuam)."
+    fi
+  else
+    echo "AVISO: arquitetura $(uname -m) sem go2rtc pronto; câmeras ao vivo indisponíveis."
+  fi
+fi
+
 python3 -m venv venv
 # shellcheck disable=SC1091
 source venv/bin/activate

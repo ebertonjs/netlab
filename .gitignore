@@ -1,10 +1,16 @@
 venv/
 __pycache__/
 *.pyc
-netnoc.db
-netnoc_backup.db
 .DS_Store
-netnoc.db-wal
-netnoc.db-shm
-netnoc.key
 *.bak
+# banco, WAL e cópias (inclui '-netnoc.db', 'netnoc_backup.db' etc.)
+*.db
+*.db-*
+*.sqlite*
+# chave que decifra as credenciais salvas
+*.key
+netnoc-backup*.json
+# câmeras: binário e config gerada do go2rtc
+bin/
+go2rtc.yaml
+go2rtc.yaml.tmp

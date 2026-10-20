@@ -211,20 +211,33 @@ def verify(user, pw):
 # ---------------------------------------------------------------- rate limit
 _fails = {}
 _flock = threading.Lock()
-MAX_FAILS, WINDOW = 8, 600
+MAX_FAILS, WINDOW = 8, 600          # por IP+usuário
+MAX_FAILS_IP = 40                   # teto por IP (força bruta trocando o usuário)
 
 
-def rate_limited(ip):
+def _count(key, now):
+    lst = [t for t in _fails.get(key, []) if t > now - WINDOW]
+    if lst:
+        _fails[key] = lst
+    else:
+        _fails.pop(key, None)
+    return len(lst)
+
+
+def rate_limited(ip, user=""):
     now = time.time()
     with _flock:
-        lst = [t for t in _fails.get(ip, []) if t > now - WINDOW]
-        _fails[ip] = lst
-        return len(lst) >= MAX_FAILS
+        if len(_fails) > 5000:
+            _fails.clear()
+        return (_count((ip, (user or "").lower()), now) >= MAX_FAILS
+                or _count((ip, None), now) >= MAX_FAILS_IP)
 
 
-def register_fail(ip):
+def register_fail(ip, user=""):
+    now = time.time()
     with _flock:
-        _fails.setdefault(ip, []).append(time.time())
+        _fails.setdefault((ip, (user or "").lower()), []).append(now)
+        _fails.setdefault((ip, None), []).append(now)
 
 
 # --------------------------------------------------------------- tokens agent
@@ -285,6 +298,25 @@ def parse_session(token):
         return None
 
 
+def _hostport(h, scheme):
+    h = (h or "").strip().lower()
+    host, sep, port = h.rpartition(":")
+    if not sep or "]" in port:                       # sem porta (ou IPv6 sem porta)
+        return h, {"http": "80", "https": "443", "ws": "80", "wss": "443"}.get(scheme, "")
+    return host, port
+
+
+def _same_origin(origin, hdrs):
+    """Origin do navegador == host acessado (aceita porta padrão implícita e host repassado por proxy)."""
+    if not origin or "://" not in origin:
+        return False
+    scheme, _, rest = origin.partition("://")
+    o = _hostport(rest.split("/", 1)[0], scheme.lower())
+    cands = [hdrs.get("host", "")] + [x.strip() for x in hdrs.get("x-forwarded-host", "").split(",") if x.strip()]
+    return any(_hostport(c, scheme.lower()) == o or _hostport(c, "https" if scheme == "http" else "http") == o
+               for c in cands)
+
+
 def _cookie_from(hdr):
     for part in (hdr or "").split(";"):
         k, _, v = part.strip().partition("=")
@@ -297,6 +329,7 @@ def _cookie_from(hdr):
 AUTH_OFF = os.environ.get("NETNOC_AUTH", "on").lower() == "off"
 PUBLIC_PATHS = {"/healthz", "/status", "/status.html", "/status.js", "/api/public/status",
                 "/login", "/login.js", "/api/login", "/api/loginfo", "/style.css", "/theme-grafana.css",
+                "/glass/login.css",
                 "/manifest.webmanifest", "/sw.js", "/icon-192.png", "/icon-512.png", "/favicon.ico"}
 AGENT_PREFIX = "/api/agent/"
 METRICS_PATH = "/metrics"
@@ -304,8 +337,8 @@ ADMIN_ONLY_METHODS = {"POST", "PUT", "DELETE", "PATCH"}
 # POSTs liberados para viewer (leituras que usam POST)
 VIEWER_POST_OK = {"/api/logout"}
 
-CSP = ("default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; "
-       "script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+CSP = ("default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; "
+       "script-src 'self'; connect-src 'self'; media-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 SEC_HEADERS = [
     (b"content-security-policy", CSP.encode()),
     (b"x-frame-options", b"DENY"),
@@ -328,6 +361,35 @@ class AuthMiddleware:
         self.app = app
 
     async def __call__(self, scope, receive, send):
+        if scope["type"] == "websocket":
+            # vídeo das câmeras: exige sessão válida e mesma origem (evita sequestro de WebSocket entre sites)
+            hdrs = {k.decode().lower(): v.decode("latin-1") for k, v in scope["headers"]}
+            scope.setdefault("state", {})
+            origin = hdrs.get("origin", "")
+            same = _same_origin(origin, hdrs)
+            sess = None
+            if not AUTH_OFF:
+                sess = parse_session(_cookie_from(hdrs.get("cookie", "")))
+                auth = hdrs.get("authorization", "")
+                if not sess and auth.startswith("Basic "):          # quem entrou pelo login do navegador (Basic)
+                    ip = (scope.get("client") or ("?", 0))[0]
+                    try:
+                        u, _, pw = base64.b64decode(auth[6:]).decode().partition(":")
+                    except Exception:
+                        u, pw = "", ""
+                    if u and not rate_limited(ip, u):
+                        r = verify(u, pw)
+                        if r:
+                            sess = (u, r)
+                        else:
+                            register_fail(ip, u)
+            if not same or (not AUTH_OFF and not sess):
+                why = "origem diferente" if not same else ("sem cookie de sessão" if SESSION_COOKIE not in hdrs.get("cookie", "") else "sessão inválida/expirada")
+                print(f"[cam/ws] recusado: {why} (origin={origin[:80]!r} host={hdrs.get('host', '')[:80]!r})", flush=True)
+                await send({"type": "websocket.close", "code": 1008})
+                return
+            scope["state"]["user"], scope["state"]["role"] = sess if sess else ("anon", "admin")
+            return await self.app(scope, receive, send)
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
         path = scope["path"]
@@ -358,23 +420,25 @@ class AuthMiddleware:
 
         role, user = "admin", "anon"
         if not AUTH_OFF:
-            if rate_limited(client):
-                return await _send_plain(send, 429, '{"detail":"Muitas tentativas. Aguarde."}',
-                                         [(b"retry-after", b"600")])
             auth = hdrs.get("authorization", "")
             role = None
             sess = parse_session(_cookie_from(hdrs.get("cookie", ""))) if SESSION_COOKIE in hdrs.get("cookie", "") else None
             if sess:
+                # sessão válida nunca é bloqueada pelo limite de tentativas (antes: 8 erros de
+                # qualquer um no mesmo IP/proxy derrubavam todos os usuários logados)
                 user, role = sess
             elif auth.startswith("Basic "):
                 try:
                     u, _, p = base64.b64decode(auth[6:]).decode().partition(":")
-                    role = verify(u, p)
-                    user = u
-                    if role is None:
-                        register_fail(client)
                 except Exception:
-                    register_fail(client)
+                    u, p = "", ""
+                if rate_limited(client, u):
+                    return await _send_plain(send, 429, '{"detail":"Muitas tentativas. Aguarde."}',
+                                             [(b"retry-after", b"600")])
+                role = verify(u, p) if u else None
+                user = u
+                if role is None:
+                    register_fail(client, u)
             if role is None:
                 browser = "sec-fetch-mode" in hdrs
                 if (browser and method == "GET" and not path.startswith("/api/")

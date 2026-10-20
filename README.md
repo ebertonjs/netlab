@@ -1,75 +1,102 @@
 # 🛰️ NetLAB
 
-Dashboard de monitoramento de rede em tempo real, feito para rodar em um Raspberry Pi (ou qualquer Linux) com baixo consumo de CPU/RAM. Interface no estilo de ferramentas de NOC, 100% self-hosted, sem depender de serviços externos além dos alvos que você monitora.
+Painel de monitoramento de rede **self-hosted** (na interface ele se chama **NetNOC**; o nome é configurável), feito para rodar num Raspberry Pi (ou qualquer Linux) e ficar aberto num tablet na parede, numa TV ou no PC. Ping, DNS, incidentes, MikroTik, AdGuard, topologia, SLA, câmeras do DVR e modo TV — tudo num processo leve, com SQLite embutido e sem depender de serviço externo.
 
 ![Python](https://img.shields.io/badge/Python-3.9%2B-blue)
 ![FastAPI](https://img.shields.io/badge/FastAPI-backend-009688)
+![SQLite](https://img.shields.io/badge/SQLite-embutido-003b57)
+![Versão](https://img.shields.io/badge/vers%C3%A3o-3.3-f59e2e)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-![Mission Control](docs/img/mission-dark-blue.jpg)
+![NetLAB — tema Glass escuro](docs/img/glass-escuro.jpg)
 
 ---
 
-## 🖼️ Capturas de tela
+## ✨ Destaques
 
-> Dados de demonstração.
+- **Ping em tempo real** por destino — latência, jitter e perda, com sparkline e disponibilidade por hora
+- Checks **ICMP, TCP e HTTP/HTTPS** (código esperado e validade do certificado) e **multi-site** com agente leve para filiais
+- **Incidentes automáticos** que abrem e fecham sozinhos (offline, perda, latência, jitter, DNS lento, CPU/temperatura, câmera sem vídeo, HD do DVR). Queda local vira **um único alerta** em vez de dezenas
+- **Notificações** por Telegram, Discord, webhook assinado (HMAC), e-mail e navegador, com janelas de manutenção — no Telegram, a perda de vídeo chega com a **última foto da câmera**
+- **4 temas que mudam a interface inteira**, escolhidos por aparelho, com tamanho ajustável (Normal / Compacta / Mínima)
+- **Modo TV** com rodízio de cenas: visão geral, topologia animada, equipamentos, últimas 24 h e câmeras
+- **Câmeras do DVR Intelbras** (MHDX, API compatível Dahua) **ao vivo só enquanto alguém assiste** — roda até no Raspberry Pi 3
+- **Integrações**: MikroTik (REST), AdGuard Home, SNMP, Zabbix, agentes remotos
+- **Topologia** da rede com dependências (se o gateway cai, os filhos aparecem como isolados, não como offline)
+- **Comparação de DNS**, speedtest, ferramentas (traceroute, portas, certificados, varredura de rede)
+- **SLA**, MTTR/MTBF, heatmap dia × hora, relatório imprimível, página de status pública opcional e métricas **Prometheus**
+- **Login com sessão**, perfis admin/visualizador, proteção CSRF e CSP, credenciais cifradas no banco
+- **Tudo configurável pela interface**, sem editar arquivo
 
-| | |
+---
+
+## 🎨 Temas
+
+Cada aparelho escolhe o seu em **Configurações → Aparência**. O admin define o padrão do servidor, e uma URL pode fixar o tema numa tela de quiosque.
+
+| Glass (escuro / claro) | NOC Terminal |
 |---|---|
-| ![Login](docs/img/login.jpg)<br>**Tela de login** com nome do app e tema | ![Mission Control](docs/img/mission-dark-blue.jpg)<br>**Mission Control** (tema Azul Escuro) |
-| ![Grafana](docs/img/mission-grafana.jpg)<br>**Tema Grafana** | ![Claro](docs/img/mission-light.jpg)<br>**Tema Claro** |
-| ![Topologia](docs/img/topologia-hierarquia.jpg)<br>**Topologia em árvore**: impacto das quedas ("isolado por…") | ![Roxo](docs/img/mission-dark-purple.jpg)<br>**Tema Roxo Escuro** |
-| ![TV alerta](docs/img/tv-alerta.jpg)<br>**Modo TV: alerta** que toma a tela | ![TV visão geral](docs/img/tv-visao-geral.jpg)<br>**Modo TV: visão geral** |
-| ![TV topologia](docs/img/tv-topologia.jpg)<br>**Modo TV: topologia** | ![TV 24h](docs/img/tv-24h.jpg)<br>**Modo TV: últimas 24 h** |
+| ![Glass claro](docs/img/glass-claro.jpg) | ![NOC Terminal](docs/img/terminal.jpg) |
+| **Grafana / Zabbix** | **Material You** |
+| ![Grafana/Zabbix](docs/img/grafana.jpg) | ![Material You](docs/img/material.jpg) |
+
+- **Glass** — vidro fosco, cards com imagem e dock flutuante. Feito para tablet na parede.
+- **NOC Terminal** — monoespaçado, fósforo verde/âmbar/ciano, destinos em tabela, navegação pelas teclas 1–0.
+- **Grafana / Zabbix** — painéis planos e densos com menu lateral fixo. Mais informação por tela no PC.
+- **Material You** — paleta inteira gerada a partir da sua cor de destaque.
+
+![Configurações → Aparência](docs/img/temas.jpg)
 
 ---
 
-## ✨ Funcionalidades
+## 📺 Modo TV
 
-**Monitoramento**
-- Ping em tempo real (latência, jitter e perda) com atualização ao vivo via SSE
-- Checks ICMP, **TCP** e **HTTP/HTTPS** (com código esperado e validade do certificado)
-- Uptime 24 h, barras de disponibilidade e sparklines por alvo
-- Alvo pai/filho: o filho não alerta quando o pai está offline
-- Comparação de DNS, teste de velocidade, CPU/memória/temperatura do host
-- Integração com **MikroTik** (RouterOS v7), **AdGuard Home**, **SNMP v1/v2c/v3** (inclui OIDs customizados, ex.: potência óptica de OLT) e **Zabbix**
-- **Multi-site**: agente leve para filiais, com diagnóstico "problema no alvo × na conexão do central"
+Tela cheia, pensada para ficar ligada o dia todo: relógio grande, rodízio automático de cenas e alerta em tela cheia quando algo crítico acontece (com som opcional).
 
-**Incidentes e alertas**
-- Incidentes automáticos (offline, latência, jitter, perda, CPU/temperatura, certificado) com histerese
-- Notificações por Telegram, Discord, webhook assinado (HMAC), e-mail SMTP e notificações do navegador
-- Janelas de manutenção (registra o incidente sem notificar)
+| Visão geral | Topologia |
+|---|---|
+| ![Modo TV — visão geral](docs/img/tv-visao-geral.jpg) | ![Modo TV — topologia](docs/img/tv-topologia.jpg) |
 
-**Análise e relatórios**
-- Timeline de incidentes, heatmap dia × hora e detecção de padrões
-- SLA, MTTR e MTBF por alvo, exportação CSV e relatório imprimível (`/report.html`)
-- Página pública de status (`/status`) opcional
-- Métricas Prometheus em `/metrics`
-- Backup e restauração (sem segredos)
+![Modo TV — últimas 24 horas](docs/img/tv-24h.jpg)
 
-**Ferramentas**
-- Traceroute, comparação IPv4 × IPv6 e descoberta de dispositivos na rede (ICMP + ARP + DNS reverso)
+Atalhos: `←` `→` trocam de cena, `espaço` pausa, `A` dispensa o alerta, `S` liga/desliga o som, `F` tela cheia, `Esc` sai.
+Para abrir direto numa TV: `http://IP:8000/#tv` — ou só algumas cenas: `/#tv?cenas=1,2,5&tempo=20`.
 
-**Interface**
-- **Mission Control**: painel principal com saúde da rede, radar de latência, incidentes, equipamentos, speedtest, sites e AdGuard
-- **Modo TV** (botão 📺 ou `#tv`): 4 cenas em rodízio (visão geral, topologia, equipamentos, 24 h), tela de alerta que toma o monitor, som e toasts
-- **Topologia em árvore** (hierarquia com impacto das quedas, "isolado por X") e grafo livre, com tráfego dos links em tempo real
-- 7 temas (Azul, Verde, Roxo, OLED, Claro, **Grafana** e Personalizado) que valem em toda a interface, inclusive Mission Control, TV e login
-- Menu lateral recolhível, layout responsivo e PWA instalável
-- Nome da aplicação configurável (aparece em menu, login, TV, alertas, relatórios e app instalado)
+---
 
-**Segurança**
-- **Tela de login própria** (sessão por cookie HttpOnly/SameSite, "manter conectado", botão Sair), perfis `admin` e `viewer`, proteção CSRF, CSP e limite de tentativas
-- Basic Auth continua disponível para scripts/curl; `/metrics` com token Bearer
-- Senhas e tokens cifrados no banco (Fernet), validação de entradas, log de auditoria
+## 📈 Latência, topologia e celular
+
+| Latência e disponibilidade | Topologia |
+|---|---|
+| ![Latência](docs/img/latencia.jpg) | ![Topologia](docs/img/topologia.jpg) |
+
+<p align="center"><img src="docs/img/celular.jpg" width="300" alt="NetNOC no celular"></p>
+
+---
+
+## 📹 Câmeras (DVR Intelbras)
+
+Integração com DVRs Intelbras da linha **MHDX** (API compatível com Dahua):
+
+- Mosaico e tela cheia **ao vivo**, mais uma cena opcional no Modo TV
+- O vídeo **só é puxado do DVR enquanto alguém está assistindo**; ao fechar a tela, o stream para
+- O vídeo é repassado sem conversão pelo [go2rtc](https://github.com/AlexxIT/go2rtc) (baixado pelo `install.sh`), por isso roda até no Raspberry Pi 3
+- Fotos de cada canal e alertas de **perda de vídeo** e **falha no HD**, com a última imagem no Telegram
+
+Requisitos:
+- Streams em **H.264**. Os navegadores não tocam H.265: troque em *Câmera → Codificação* no DVR.
+- Um usuário do DVR só de visualização.
+- Se o teste mostrar `HTTP 404` nas consultas, habilite o **CGI** nos serviços de rede do DVR. Fotos, nomes e eventos usam o CGI; o vídeo ao vivo usa só o RTSP (porta 554).
+
+O go2rtc escuta apenas em `127.0.0.1`. O navegador nunca fala com o DVR diretamente: tudo passa pelo NetNOC, com login. A senha do DVR não é gravada no arquivo do go2rtc.
 
 ---
 
 ## 🧰 Requisitos
 
 - Python 3.9 ou superior
-- Linux (testado em Raspberry Pi OS / DietPi e Debian/Ubuntu)
-- Pacotes opcionais: `snmp` (SNMP), `traceroute` e `iputils-ping`
+- Linux (testado em Raspberry Pi OS e DietPi, inclusive no Raspberry Pi 3)
+- Acesso à internet no aparelho (ping, DNS, IP público e speedtest)
 
 ---
 
@@ -84,61 +111,44 @@ chmod +x install.sh
 ./install.sh
 ```
 
-O `install.sh` instala `gcc`/`python3-dev` (se faltarem), as ferramentas `snmp`, `traceroute` e `iputils-ping`, cria o ambiente virtual `venv` e instala o `requirements.txt`.
+O `install.sh`:
+1. instala `gcc`/`python3-dev` se faltar (para compilar o `psutil`), além de `snmp`, `traceroute` e `ping`;
+2. baixa o **go2rtc** para a sua arquitetura (câmeras ao vivo);
+3. cria o ambiente virtual (`venv`) e instala as dependências.
 
-### Instalação manual
+> Rode **sem** `sudo` — o script pede a senha só quando precisa instalar pacotes.
 
-```bash
-sudo apt-get update
-sudo apt-get install -y gcc python3-dev python3-venv snmp traceroute iputils-ping
-
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-```
-
----
-
-## ▶️ Rodando
+### Rodando
 
 ```bash
 source venv/bin/activate
 python3 -m uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
-Acesse `http://IP_DO_DISPOSITIVO:8000` (descubra o IP com `hostname -I`) e entre pela tela de login.
+Abra `http://IP_DO_DISPOSITIVO:8000` em qualquer aparelho da rede (`hostname -I` mostra o IP do Pi).
 
-### Primeiro acesso
+Na primeira execução, a senha do usuário **admin** aparece no log. Também dá para defini-la antes com `NETNOC_ADMIN_PASSWORD`, ou trocar depois:
 
-Na primeira subida o terminal mostra a senha do usuário `admin`:
-
-```
-NetNOC: usuário inicial 'admin'  senha: xxxxxxxxxxxx
+```bash
+venv/bin/python manage.py set-password admin
 ```
 
-- Para escolher a senha antes de subir: `export NETNOC_ADMIN_PASSWORD='sua-senha'`
-- Para trocar depois: `python manage.py set-password admin`
-- Para redefinir se esqueceu: `python manage.py reset-admin` (gera uma senha nova)
-- Para criar usuários só de leitura: **Configurações → Segurança**
+### Iniciando no boot (systemd)
 
-### Rodar como serviço (systemd)
-
-Atalho: `./install.sh --service` cria e ativa o serviço sozinho. Manualmente:
-
-Crie `/etc/systemd/system/netnoc.service` ajustando usuário e caminhos:
+Jeito rápido: `./install.sh --service` cria e ativa o serviço. Ou manualmente:
 
 ```ini
+# /etc/systemd/system/netnoc.service
 [Unit]
 Description=NetNOC
 After=network-online.target
 Wants=network-online.target
 
 [Service]
-User=seu_usuario
-WorkingDirectory=/home/seu_usuario/netlab
-Environment=PYTHONUNBUFFERED=1
-ExecStart=/home/seu_usuario/netlab/venv/bin/python -m uvicorn main:app --host 0.0.0.0 --port 8000
+WorkingDirectory=/caminho/para/netlab
+ExecStart=/caminho/para/netlab/venv/bin/python3 -m uvicorn main:app --host 0.0.0.0 --port 8000
 Restart=always
+User=seu_usuario
 
 [Install]
 WantedBy=multi-user.target
@@ -147,14 +157,41 @@ WantedBy=multi-user.target
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable --now netnoc
-sudo journalctl -u netnoc -f     # logs (a senha inicial do admin aparece aqui)
+journalctl -u netnoc -f        # logs
 ```
 
 ---
 
 ## ⚙️ Configuração
 
-Quase tudo é feito pela interface, em **Configurações**: destinos e tipos de check, servidores DNS, intervalos, notificações, manutenção, SNMP, Zabbix, MikroTik, AdGuard, usuários, tokens, backup e página pública. O `config.json` traz apenas os valores iniciais.
+Tudo pela aba **Configurações**:
+
+- **Destinos** — hosts a monitorar, com dependência (pai) para a topologia
+- **Alertas** — limites de latência, jitter, perda e DNS, e Telegram (bot + chat_id, com botão de teste)
+- **Integrações** — MikroTik, AdGuard Home e DVR (com **Salvar e testar**, que mostra o que o equipamento respondeu)
+- **Aparência** — tema, modo, cor, tamanho da interface e padrão do servidor
+- **Backup/restauração** da configuração (as senhas não saem no arquivo)
+
+O `config.json` só é usado na primeira execução para popular o banco; depois tudo fica no SQLite.
+
+### Telegram
+
+1. Crie um bot com o [@BotFather](https://t.me/BotFather) (`/newbot`) e copie o **token**.
+2. Mande qualquer mensagem para o bot.
+3. Abra `https://api.telegram.org/bot<TOKEN>/getUpdates` e copie o `chat_id`.
+4. Cole os dois em **Configurações → Alertas**, ative e clique em **Enviar teste**.
+
+### URLs úteis (quiosque)
+
+| URL | O que faz |
+|---|---|
+| `/?skin=terminal&modo=verde#tv` | Modo TV no tema NOC Terminal |
+| `/?skin=grafana&modo=dark` | Força o tema Grafana nesta tela |
+| `/?skin=material&cor=%230b57d0` | Material You com outra cor |
+| `/?densidade=minima` | Interface menor nesta tela |
+| `/classic` | Interface antiga (v2) |
+
+### Variáveis de ambiente
 
 | Variável | Para que serve |
 |---|---|
@@ -162,6 +199,7 @@ Quase tudo é feito pela interface, em **Configurações**: destinos e tipos de 
 | `NETNOC_DB` | Caminho do banco SQLite (padrão `netnoc.db`) |
 | `NETNOC_KEY_FILE` | Arquivo da chave de cifragem (padrão `netnoc.key`) |
 | `NETNOC_SECRET_KEY` | Chave de cifragem direto na variável (alternativa ao arquivo) |
+| `NETNOC_GO2RTC` | Caminho do go2rtc, se não estiver em `bin/go2rtc` |
 | `NETNOC_AUTH=off` | Desliga o login (não recomendado) |
 
 > ⚠️ Faça backup do `netnoc.db` **e** do `netnoc.key`. Sem a chave, as senhas e tokens salvos não podem ser lidos.
@@ -183,36 +221,44 @@ Quase tudo é feito pela interface, em **Configurações**: destinos e tipos de 
 ```bash
 cd netlab
 git pull
-source venv/bin/activate
-pip install -r requirements.txt
+./install.sh          # baixa o go2rtc e instala dependências novas
 sudo systemctl restart netnoc
 ```
 
-O banco é migrado automaticamente na primeira subida. Faça backup antes.
-
----
+O banco migra sozinho na primeira subida (faça backup antes). No navegador, `Ctrl+F5` uma vez.
 
 ---
 
 ## 🗂️ Estrutura
 
 ```
-main.py            API (FastAPI) e rotas
-monitor.py         coleta, incidentes, notificações, integrações
-security.py        login, cifragem, validações
-db.py / stats.py   SQLite (WAL), rollups e consultas
-checks.py          checks ICMP/TCP/HTTP e certificados
-snmp.py zabbix.py  integrações
-sla.py backup.py   relatórios e backup
-agent.py           agente para sites remotos
-manage.py          administração de usuários/senhas
-notifier.py        canais de notificação (Telegram, Discord, webhook, e-mail)
-sites.py           multi-site (agentes)
-static/            interface (HTML, CSS e JS sem build; login.html = tela de login)
-docs/              notas de cada atualização
-INSTALL.md         tutorial de instalação
-CHANGELOG.md       histórico de versões
+netlab/
+├── main.py        # API FastAPI + rotas do frontend
+├── monitor.py     # coletores supervisionados: ping, DNS, sistema, incidentes, integrações
+├── dvr.py         # DVR Intelbras: CGI, eventos, fotos e go2rtc sob demanda
+├── security.py    # login, sessões, CSRF, CSP, limite de tentativas
+├── db.py          # SQLite (WAL, um único escritor) e rollups 5 min / 1 h
+├── stats.py · sla.py · checks.py · snmp.py · sites.py · zabbix.py · notifier.py · backup.py
+├── agent.py       # agente para sites remotos
+├── install.sh · manage.py · config.json · requirements.txt
+├── static/
+│   ├── app.html             # interface v3
+│   ├── glass/               # temas, modo TV, player de câmeras, fontes locais
+│   └── index.html           # interface clássica (/classic)
+├── docs/          # notas de cada atualização e capturas de tela
+├── INSTALL.md     # tutorial de instalação
+└── CHANGELOG.md   # histórico de versões
 ```
+
+---
+
+## 🛠️ Notas técnicas
+
+- Coletores supervisionados: uma exceção não derruba a thread, e a saúde de cada um aparece em Configurações (`/api/health/workers`)
+- Janela de avaliação por tempo (`window_seconds`, padrão 300 s) e DNS lento só depois de 3 medições seguidas
+- Histórico bruto de 7 dias, agregados de 5 min/1 h por mais tempo (`history_retention_days`)
+- Chart.js, ícones e fontes ficam no próprio projeto: funciona sem internet e sem CDN
+- Ping usa o `ping` do sistema, sem precisar de root
 
 ---
 

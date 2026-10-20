@@ -14,6 +14,9 @@ def main():
         print("Senha do admin redefinida:", pw)
     elif cmd == "set-password" and len(sys.argv) >= 3:
         user = sys.argv[2]
+        if len(sys.argv) > 3:
+            print("Aviso: senha passada na linha de comando fica no histórico do shell. "
+                  "Prefira: python manage.py set-password <usuario>")
         pw = sys.argv[3] if len(sys.argv) > 3 else getpass.getpass("Nova senha: ")
         if len(pw) < 8:
             print("Mínimo 8 caracteres"); return 1

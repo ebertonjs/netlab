@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-skin="glass" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1c1b36">
+  <title>NetNOC</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon-192.png">
+  <link rel="stylesheet" href="glass/fonts.css?v=3.3.0">
+  <link rel="stylesheet" href="glass/glass.css?v=3.3.0">
+  <link rel="stylesheet" href="glass/skins/terminal.css?v=3.3.0">
+  <link rel="stylesheet" href="glass/skins/grafana.css?v=3.3.0">
+  <link rel="stylesheet" href="glass/skins/material.css?v=3.3.0">
+  <script src="glass/skins.js?v=3.3.0"></script>
+</head>
+<body>
+  <div class="bg" aria-hidden="true"></div>
+
+  <div class="shell" id="shell">
+    <!-- ===== coluna esquerda: relógio + visão da internet + incidentes ===== -->
+    <header class="dateblock">
+      <div class="date" id="dateLine">—</div>
+      <div class="subdate" id="subLine">—</div>
+    </header>
+
+    <aside class="side glass-dark" id="side">
+      <div class="clock" id="clock">--:--</div>
+      <div class="rule"></div>
+      <div class="now">
+        <div class="now-icon" id="netIcon"></div>
+        <div class="now-main">
+          <div class="now-val"><span id="netLat">--</span><sup>ms</sup></div>
+          <div class="now-sub" id="netSub">↑ -- ↓ --</div>
+        </div>
+      </div>
+      <div class="hours" id="hours"></div>
+      <div class="rule"></div>
+      <div class="agenda" id="agenda"></div>
+    </aside>
+
+    <!-- ===== chips de status ===== -->
+    <nav class="chips" id="chips" aria-label="Status"></nav>
+
+    <div class="me" id="me">
+      <button class="avatar" id="themeBtn" type="button" title="Alternar tema claro/escuro"></button>
+      <button class="avatar" id="userBtn" type="button" title="Sessão"></button>
+    </div>
+
+    <!-- ===== cards dos destinos ===== -->
+    <main class="grid" id="grid" aria-label="Destinos monitorados"></main>
+  </div>
+
+  <!-- ===== dock ===== -->
+  <nav class="dock" id="dock" aria-label="Seções"></nav>
+
+  <!-- ===== painel sobreposto (sheet) ===== -->
+  <div class="sheet-wrap" id="sheetWrap" hidden>
+    <div class="sheet-grabber" aria-hidden="true"></div>
+    <div class="sheet-head">
+      <div class="sheet-bar glass">
+        <span class="sheet-ico" id="sheetIco"></span>
+        <span class="sheet-title" id="sheetTitle"></span>
+        <span class="sheet-tools" id="sheetTools"></span>
+      </div>
+      <button class="round glass sheet-close" id="sheetClose" type="button" aria-label="Fechar"></button>
+    </div>
+    <div class="sheet-body" id="sheetBody"></div>
+  </div>
+
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+
+  <script src="util.js?v=3.0.0"></script>
+  <script src="icons.js"></script>
+  <script src="chart.umd.js"></script>
+  <script src="glass/ui-icons.js?v=3.3.0"></script>
+  <script src="glass/app.js?v=3.3.0"></script>
+  <script src="glass/camplayer.js?v=3.3.0"></script>
+  <script src="glass/sheets.js?v=3.3.0"></script>
+  <script src="glass/tv.js?v=3.3.0"></script>
+</body>
+</html>

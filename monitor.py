@@ -1,6 +1,6 @@
 import subprocess, time, threading, platform, json, re, os
 from collections import deque, defaultdict
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait as futures_wait
 from typing import Optional
 
 import requests
@@ -17,7 +17,13 @@ RECOVER_N = int(CFG.get("recovery_consecutive_ok", 2))
 LOSS_MIN_FAILS = int(CFG.get("loss_min_failures", 2))
 RAW_DAYS = int(CFG.get("raw_retention_days", 7))
 H1_DAYS = int(CFG.get("rollup_1h_retention_days", 365))
-WINDOW = 20
+# janela de avaliação em TEMPO (antes: 20 amostras -> 20 min com ping de 60 s)
+WINDOW_S = int(CFG.get("window_seconds", 300))
+MIN_SAMPLES = int(CFG.get("window_min_samples", 5))
+WINDOW = 240                                   # teto de amostras guardadas em memória
+DNS_SLOW_N = int(CFG.get("dns_slow_consecutive", 3))
+HOST_LABEL = CFG.get("host_label", "Raspberry Pi")
+LOCAL_LABEL = "Conectividade local"
 
 IS_WINDOWS = platform.system().lower().startswith("win")
 
@@ -28,8 +34,11 @@ _consec = {}              # target -> [fails, oks]
 _active_incidents = {}    # (type,target) -> {id,severity,started_ts}
 _pending = {}             # (type,target) -> consecutive bad/ok counters for hysteresis
 _next_due = {}
+_clean_since = {}         # target -> ts: falhas anteriores não contam para perda/jitter (pós-recuperação)
+_inflight = {}            # target -> (target_dict, submitted_ts, future)
 _started_at = time.time()
 _targets_cache = None
+_intervals_cache = None
 
 
 # ------------------------------------------------------------------ settings
@@ -90,9 +99,20 @@ _INTERVAL_DEFAULTS = {
 
 
 def get_intervals():
-    d = dict(_INTERVAL_DEFAULTS)
-    d.update(json.loads(db.get_setting("intervals", "{}") or "{}"))
-    return d
+    global _intervals_cache
+    if _intervals_cache is None:
+        d = dict(_INTERVAL_DEFAULTS)
+        try:
+            d.update(json.loads(db.get_setting("intervals", "{}") or "{}"))
+        except Exception:
+            pass
+        _intervals_cache = d
+    return dict(_intervals_cache)
+
+
+def invalidate_intervals():
+    global _intervals_cache
+    _intervals_cache = None
 
 
 def set_intervals(data):
@@ -105,6 +125,7 @@ def set_intervals(data):
             raise ValueError(f"{k}: valor deve estar entre 1 e 86400")
         current[k] = v
     db.set_setting("intervals", json.dumps(current))
+    invalidate_intervals()
 
 
 # ------------------------------------------------------------------ telegram
@@ -123,13 +144,54 @@ def set_telegram(enabled, bot_token, chat_id, min_severity):
         "chat_id": chat_id or "", "min_severity": min_severity or "Alta"}, _TG_SECRET)
 
 
+_tg_last_error = [""]
+
+
 def send_telegram(message):
+    """True/False; o motivo da última falha fica em telegram_last_error() (sem o token)."""
     cfg = get_telegram()
     if not cfg["enabled"] or not cfg["bot_token"] or not cfg["chat_id"]:
+        _tg_last_error[0] = "Telegram desativado ou sem token/chat_id"
         return False
     try:
         url = f"https://api.telegram.org/bot{cfg['bot_token']}/sendMessage"
-        r = requests.post(url, data={"chat_id": cfg["chat_id"], "text": message}, timeout=5)
+        r = requests.post(url, data={"chat_id": cfg["chat_id"], "text": message}, timeout=8)
+        if r.ok:
+            _tg_last_error[0] = ""
+            return True
+        try:
+            desc = r.json().get("description", "")
+        except Exception:
+            desc = ""
+        _tg_last_error[0] = f"HTTP {r.status_code} {desc}"[:160]
+        return False
+    except Exception as e:
+        # nunca str(e): a exceção do requests traz a URL, que contém o token do bot
+        _tg_last_error[0] = type(e).__name__
+        return False
+
+
+def telegram_last_error():
+    return _tg_last_error[0]
+
+
+def send_telegram_photo(jpeg, caption, severity="Alta", target=None):
+    """Foto (ex.: última imagem da câmera) respeitando ativação, severidade mínima e manutenção."""
+    cfg = get_telegram()
+    if not cfg["enabled"] or not cfg["bot_token"] or not cfg["chat_id"]:
+        return False
+    if _SEVERITY_ORDER.get(severity, 0) < _SEVERITY_ORDER.get(cfg["min_severity"], 3):
+        return False
+    try:
+        import notifier
+        if target and notifier.in_maintenance(target):
+            return False
+    except Exception:
+        pass
+    try:
+        r = requests.post(f"https://api.telegram.org/bot{cfg['bot_token']}/sendPhoto",
+                          data={"chat_id": cfg["chat_id"], "caption": caption[:1000]},
+                          files={"photo": ("camera.jpg", jpeg, "image/jpeg")}, timeout=20)
         return r.ok
     except Exception:
         return False
@@ -221,8 +283,38 @@ def remove_target(name):
         _last_latency.pop(name, None)
         _consec.pop(name, None)
         _next_due.pop(name, None)
+        _clean_since.pop(name, None)
+        _inflight.pop(name, None)
     for (itype, tgt) in [k for k in list(_active_incidents) if k[1] == name]:
         resolve_incident(itype, tgt, "Destino removido")
+
+
+def update_target(name, parent=..., interval=...):
+    """Altera pai e/ou intervalo de um destino existente (sem recriar e sem perder histórico)."""
+    items = get_targets()
+    by = {t["name"]: t for t in items}
+    if name not in by:
+        raise ValueError("Destino não encontrado")
+    t = by[name]
+    if parent is not ...:
+        parent = parent or None
+        if parent is not None:
+            if parent not in by or parent == name:
+                raise ValueError("Pai inválido")
+            if name in _ancestors(parent, items):
+                raise ValueError("Isso criaria um ciclo na topologia")
+        t["parent"] = parent
+    if interval is not ...:
+        if interval in (None, 0, ""):
+            t.pop("interval", None)
+        else:
+            interval = int(interval)
+            if not 2 <= interval <= 3600:
+                raise ValueError("Intervalo deve estar entre 2 e 3600 s")
+            t["interval"] = interval
+        _next_due.pop(name, None)
+    db.set_setting("targets", json.dumps(items))
+    _invalidate_targets()
 
 
 def add_dns(name, ip):
@@ -337,11 +429,13 @@ def get_mikrotik_status():
 
 
 def get_mikrotik_interfaces():
+    # janela proporcional ao intervalo de coleta (antes: 1 h fixa -> tabela vazia com coleta de 6 h)
+    win = max(3600, _setting_interval("mikrotik", 60) * 3)
     return db.query("""
         SELECT m.name, m.running, m.disabled, m.rx_bytes, m.tx_bytes, m.rx_bps, m.tx_bps, m.ts
         FROM mikrotik_iface m JOIN (SELECT name, MAX(ts) mts FROM mikrotik_iface
              WHERE ts >= ? GROUP BY name) x ON x.name=m.name AND x.mts=m.ts
-        ORDER BY m.name ASC""", (time.time() - 3600,))
+        ORDER BY m.name ASC""", (time.time() - win,))
 
 
 def get_mikrotik_resource_history(seconds):
@@ -411,15 +505,32 @@ def _mikrotik_parse_uptime(text):
                for v, u in re.findall(r"(\d+)([wdhms])", text))
 
 
-def mikrotik_worker():
-    while True:
-        cfg = get_mikrotik()
-        if cfg["enabled"] and cfg["host"]:
-            try:
-                _poll_mikrotik_once(cfg)
-            except Exception as e:
-                log_event(f"Falha ao coletar dados do MikroTik: {e}", "Baixa")
-        time.sleep(max(get_mikrotik()["sync_interval_seconds"], 15))
+def _safe_err(e):
+    """Mensagem de erro sem URL/credenciais (str() de exceções do requests inclui a URL)."""
+    if isinstance(e, requests.HTTPError) and e.response is not None:
+        return f"HTTP {e.response.status_code}"
+    if isinstance(e, requests.RequestException):
+        return type(e).__name__
+    return str(e)[:120]
+
+
+def _setting_interval(key, default, minimum=15):
+    """Lê só o intervalo do JSON (sem decifrar segredos) — usado a cada segundo pelo laço."""
+    try:
+        v = int(json.loads(db.get_setting(key, "{}") or "{}").get("sync_interval_seconds", default))
+    except Exception:
+        v = default
+    return max(minimum, v)
+
+
+def mikrotik_once():
+    cfg = get_mikrotik()
+    if cfg["enabled"] and cfg["host"]:
+        try:
+            _poll_mikrotik_once(cfg)
+        except Exception as e:
+            log_event(f"Falha ao coletar dados do MikroTik: {_safe_err(e)}", "Baixa")
+            raise
 
 
 # ---------------------------------------------------------------------- topology
@@ -482,15 +593,14 @@ def _poll_agh_once(cfg):
          s.get("avg_processing_time", 0)))
 
 
-def agh_worker():
-    while True:
-        cfg = get_agh()
-        if cfg["enabled"] and cfg["host"]:
-            try:
-                _poll_agh_once(cfg)
-            except Exception as e:
-                log_event(f"Falha ao coletar dados do AdGuard Home: {e}", "Baixa")
-        time.sleep(max(get_agh()["sync_interval_seconds"], 15))
+def agh_once():
+    cfg = get_agh()
+    if cfg["enabled"] and cfg["host"]:
+        try:
+            _poll_agh_once(cfg)
+        except Exception as e:
+            log_event(f"Falha ao coletar dados do AdGuard Home: {_safe_err(e)}", "Baixa")
+            raise
 
 
 def get_agh_status():
@@ -561,10 +671,37 @@ def log_event(message, severity="Info"):
 
 def reconcile_incidents():
     """Após reinício, recarrega incidentes abertos (antes eles ficavam órfãos e duplicavam)."""
-    names = {t["name"] for t in get_targets()} | {s["name"] for s in get_dns_servers()} | {"Raspberry Pi"}
+    targets = {t["name"] for t in get_targets()}
+    dns = {s["name"] for s in get_dns_servers()}
+    try:
+        import snmp
+        devs = {d["name"] for d in snmp.get_devices()}
+    except Exception:
+        devs = set()
+    sites_seen = {r["key"].split(":", 1)[1] for r in db.query_w("SELECT key FROM meta WHERE key LIKE 'agent_seen:%'")}
+
+    def still_valid(itype, tgt):
+        # antes só alvos/DNS/"Raspberry Pi" eram reconhecidos: incidentes de SNMP/agente eram
+        # fechados no boot e reabertos em seguida (alerta duplicado a cada restart)
+        if itype in ("offline", "latency", "jitter", "loss", "cert"):
+            return tgt in targets
+        if itype == "dns":
+            return tgt in dns
+        if itype in ("cpu", "temp"):
+            return True
+        if itype == "snmp":
+            return tgt in devs
+        if itype == "snmpval":
+            return tgt.split("/", 1)[0] in devs
+        if itype == "agent":
+            return tgt in sites_seen
+        if itype in ("local", "camera", "dvr_hd"):
+            return True          # câmeras: o worker de eventos do DVR reconcilia ao conectar
+        return False
+
     for r in db.query_w("SELECT * FROM incidents WHERE resolved_ts IS NULL ORDER BY id"):
         key = (r["type"], r["target"])
-        if r["target"] not in names or key in _active_incidents:
+        if not still_valid(*key) or key in _active_incidents:
             db.execute("UPDATE incidents SET resolved_ts=? WHERE id=?", (time.time(), r["id"]))
         else:
             _active_incidents[key] = {"id": r["id"], "severity": r["severity"], "started_ts": r["started_ts"]}
@@ -665,13 +802,28 @@ def _record_result(name, ts, lat):
     return (name, ts, lat, int(ok), jitter)
 
 
+def _recent(rows, now=None, since=None):
+    """Amostras dentro da janela de tempo (mínimo MIN_SAMPLES), opcionalmente após `since`."""
+    now = now or time.time()
+    lo = now - WINDOW_S
+    out = [r for r in rows if r[0] >= lo]
+    if len(out) < MIN_SAMPLES:
+        out = rows[-MIN_SAMPLES:]
+    if since:
+        cut = [r for r in out if r[0] >= since]
+        out = cut if cut else out[-1:]
+    return out
+
+
 def window_snapshot():
     out = {}
+    now = time.time()
     with _state_lock:
         items = {k: list(v) for k, v in _win.items()}
     for name, rows in items.items():
         if not rows:
             continue
+        rows = _recent(rows, now)
         ok = [r for r in rows if r[2]]
         out[name] = {
             "online": bool(rows[-1][2]), "latency": rows[-1][1],
@@ -686,8 +838,8 @@ def window_snapshot():
 def warm_state():
     """Preenche as janelas deslizantes a partir do banco ao iniciar."""
     for t in get_targets():
-        rows = db.query_w("SELECT ts, latency, success, jitter FROM pings WHERE target=? ORDER BY ts DESC LIMIT ?",
-                          (t["name"], WINDOW))
+        rows = db.query_w("SELECT ts, latency, success, jitter FROM pings WHERE target=? AND ts>=? "
+                          "ORDER BY ts DESC LIMIT ?", (t["name"], time.time() - max(WINDOW_S, 3600), WINDOW))
         d = deque(maxlen=WINDOW)
         for r in reversed(rows):
             d.append((r["ts"], r["latency"], bool(r["success"]), r["jitter"] or 0))
@@ -710,12 +862,22 @@ def _parent_down(name, items):
     return None
 
 
+def _mark_clean(name):
+    """Depois de uma recuperação, as falhas antigas não podem abrir 'perda'/'jitter' em seguida."""
+    with _state_lock:
+        _clean_since[name] = time.time()
+        for k in ("loss", "jitter", "latency"):
+            _pending.pop((k, name), None)
+
+
 def evaluate_target_health(name, items=None):
     with _state_lock:
         rows = list(_win.get(name, ()))
         fails_c, oks_c = _consec.get(name, [0, 0])
+        since = _clean_since.get(name)
     if not rows:
         return
+    rows = _recent(rows, since=since)
     total = len(rows)
     fails = sum(1 for r in rows if not r[2])
     loss_pct = fails / total * 100
@@ -735,8 +897,12 @@ def evaluate_target_health(name, items=None):
         else:
             raise_incident("offline", name, f"{name} está offline", "Alta")
     elif oks_c >= RECOVER_N:
-        _pending.pop(("suppressed", name), None)
-        resolve_incident("offline", name)
+        was_down = key in _active_incidents or _pending.pop(("suppressed", name), None)
+        if key in _active_incidents:
+            resolve_incident("offline", name)
+        if was_down:
+            _mark_clean(name)
+            return
 
     offline = key in _active_incidents or fails_c >= OFFLINE_N
     if offline:
@@ -752,88 +918,189 @@ def evaluate_target_health(name, items=None):
           lambda: raise_incident("loss", name, f"Perda de pacotes detectada para {name}", "Media"))
 
 
+def _check_local_outage(local_names):
+    """Todos os destinos locais sem resposta ao mesmo tempo = problema no próprio NetNOC/link.
+    Abre UM incidente em vez de N alertas 'offline'. Retorna True se a queda local está ativa."""
+    key = ("local", LOCAL_LABEL)
+    with _state_lock:
+        st = [_consec.get(n) for n in local_names if n in _consec]
+    if len(st) < 3:
+        if key in _active_incidents:
+            resolve_incident("local", LOCAL_LABEL, "Conectividade restabelecida")
+        return False
+    all_failing = all(c[0] > 0 for c in st)
+    confirmed = sum(1 for c in st if c[0] >= OFFLINE_N) >= max(2, (len(st) + 1) // 2)
+    if all_failing and confirmed:
+        if key not in _active_incidents:
+            raise_incident("local", LOCAL_LABEL,
+                           "Nenhum destino responde — provável falha local (link, switch, gateway ou o próprio "
+                           f"{HOST_LABEL}). Alertas individuais suprimidos.", "Alta")
+        return True
+    if key in _active_incidents and not all_failing:
+        resolve_incident("local", LOCAL_LABEL, "Conectividade restabelecida")
+        for n in local_names:
+            with _state_lock:
+                c = _consec.get(n, [0, 0])
+            if c[0] == 0:
+                _mark_clean(n)
+    return key in _active_incidents
+
+
 _pool = ThreadPoolExecutor(max_workers=16, thread_name_prefix="probe")
 
 
 def ping_cycle(force=False):
-    """Um ciclo: sonda em paralelo os alvos vencidos e grava tudo em um único commit."""
+    """Um ciclo: dispara as sondas vencidas e coleta as que terminaram.
+    Uma sonda lenta (HTTP com timeout) não segura mais o ciclo dos ICMP: fica em voo e é coletada depois."""
     now = time.time()
     interval = get_intervals()["ping_interval_seconds"]
     items = get_targets()
-    due = []
+    names = {t["name"] for t in items}
     for t in items:
-        if t.get("type") == "agent":      # alimentado por agente remoto, não sondado aqui
+        n = t["name"]
+        if t.get("type") == "agent" or n in _inflight:
             continue
         iv = max(1, int(t.get("interval") or interval))
-        if force or _next_due.get(t["name"], 0) <= now:
-            _next_due[t["name"]] = now + iv
-            due.append(t)
-    if not due:
+        if force or _next_due.get(n, 0) <= now:
+            _next_due[n] = now + iv
+            _inflight[n] = (t, time.time(), _pool.submit(probe_target, t))
+    if not _inflight:
         return 0
-    futs = [(t, _pool.submit(probe_target, t)) for t in due]
-    rows = []
-    for t, f in futs:
+    futures_wait([v[2] for v in _inflight.values()], timeout=2.5)
+    rows, done = [], []
+    for n, (t, ts, f) in list(_inflight.items()):
+        if not f.done():
+            if time.time() - ts > 60:          # sonda travada: conta como falha
+                _inflight.pop(n, None)
+                if n in names:
+                    rows.append(_record_result(n, ts, None))
+                    done.append(n)
+            continue
+        _inflight.pop(n, None)
+        if n not in names:
+            continue
         try:
-            lat = f.result(timeout=30)
+            lat = f.result()
         except Exception:
             lat = None
-        rows.append(_record_result(t["name"], time.time(), lat))
+        rows.append(_record_result(n, ts, lat))
+        done.append(n)
     db.insert_pings(rows)
-    names = {t["name"] for t in items}
-    for t in due:
-        evaluate_target_health(t["name"], items)
+    if not done:
+        return 0
+    local = [t["name"] for t in items if t.get("type") != "agent"]
+    if _check_local_outage(local):
+        return len(rows)
+    for n in done:
+        evaluate_target_health(n, items)
     return len(rows)
 
 
-def ping_worker():
+# --------------------------------------------------------------- laço supervisionado
+_health = {}          # nome -> {last_run, last_ok, error, runs, interval}
+_hlock = threading.Lock()
+
+
+def _sleep_until(t0, get_iv):
+    """Dorme em fatias de 1 s relendo o intervalo: mudança na config vale na hora
+    (antes: com intervalo de 12 h, a nova configuração só valia depois de 12 h)."""
+    while True:
+        try:
+            iv = max(1, float(get_iv()))
+        except Exception:
+            iv = 60
+        rem = t0 + iv - time.time()
+        if rem <= 0:
+            return
+        time.sleep(min(rem, 1.0))
+
+
+def _loop(name, once, get_iv, first_delay=0):
+    """Executa `once` para sempre. Exceção nunca mata a thread (antes: um 'database locked'
+    derrubava o worker em silêncio e o painel mostrava o último valor como se estivesse vivo)."""
+    time.sleep(first_delay)
     while True:
         t0 = time.time()
+        err = None
         try:
-            ping_cycle()
+            once()
         except Exception as e:
-            print("ping_worker:", e)
-        time.sleep(max(0.2, 1.0 - (time.time() - t0)))
+            err = _safe_err(e)
+            print(f"[{name}] {err}", flush=True)
+        with _hlock:
+            h = _health.setdefault(name, {"runs": 0, "errors": 0})
+            h["runs"] += 1
+            h["last_run"] = time.time()
+            if err:
+                h["errors"] += 1
+                h["error"] = err
+                h["error_ts"] = time.time()
+            else:
+                h["last_ok"] = time.time()
+                h["error"] = None
+            try:
+                h["interval"] = float(get_iv())
+            except Exception:
+                pass
+        _sleep_until(t0, get_iv)
+
+
+def worker_health():
+    now = time.time()
+    out = []
+    with _hlock:
+        items = {k: dict(v) for k, v in _health.items()}
+    for name, h in sorted(items.items()):
+        iv = h.get("interval") or 60
+        last = h.get("last_run")
+        stalled = last is None or now - last > iv * 3 + 120
+        out.append({"name": name, "interval": iv, "last_run": last, "last_ok": h.get("last_ok"),
+                    "runs": h.get("runs", 0), "errors": h.get("errors", 0), "error": h.get("error"),
+                    "status": "stalled" if stalled else ("error" if h.get("error") else "ok")})
+    return out
 
 
 # ------------------------------------------------------------------------- dns
-def dns_worker():
+_dns_fails = {}
+
+
+def dns_once():
     import dns.resolver
-    fails = {}
-    while True:
-        rows = []
-        for s in get_dns_servers():
-            resolver = dns.resolver.Resolver(configure=False)
-            resolver.nameservers = [s["ip"]]
-            resolver.timeout = resolver.lifetime = 1.5
-            start = time.time()
-            success = True
-            try:
-                resolver.resolve(CFG["dns_query_name"], "A")
-            except Exception:
-                success = False
-            latency = (time.time() - start) * 1000
-            rows.append((s["name"], time.time(), latency, int(success)))
-            fails[s["name"]] = 0 if success else fails.get(s["name"], 0) + 1
-            if not success:
-                if fails[s["name"]] >= 2:
-                    raise_incident("dns", s["name"], f"DNS {s['name']} não respondeu", "Media")
-            else:
-                _hyst("dns", s["name"], latency > THRESH["dns_ms"],
-                      lambda s=s, latency=latency: raise_incident(
-                          "dns", s["name"], f"DNS da {s['name']} lento: {latency:.0f}ms", "Baixa"))
-        db.executemany("INSERT INTO dns_checks(server,ts,latency,success) VALUES(?,?,?,?)", rows)
-        time.sleep(get_intervals()["dns_check_interval_seconds"])
+    rows = []
+    for s in get_dns_servers():
+        resolver = dns.resolver.Resolver(configure=False)
+        resolver.nameservers = [s["ip"]]
+        resolver.timeout = resolver.lifetime = 1.5
+        start = time.time()
+        success = True
+        try:
+            resolver.resolve(CFG["dns_query_name"], "A")
+        except Exception:
+            success = False
+        latency = (time.time() - start) * 1000
+        rows.append((s["name"], time.time(), latency, int(success)))
+        _dns_fails[s["name"]] = 0 if success else _dns_fails.get(s["name"], 0) + 1
+        if not success:
+            if ("local", LOCAL_LABEL) in _active_incidents:
+                continue        # queda local já alertada: não dispara um alerta por servidor DNS
+            if _dns_fails[s["name"]] >= 2:
+                raise_incident("dns", s["name"], f"DNS {s['name']} não respondeu", "Media")
+        else:
+            # lento só abre após DNS_SLOW_N medições seguidas (antes: 1 resposta > 150 ms já abria)
+            _hyst("dns", s["name"], latency > THRESH["dns_ms"],
+                  lambda s=s, latency=latency: raise_incident(
+                      "dns", s["name"], f"DNS da {s['name']} lento: {latency:.0f}ms", "Baixa"),
+                  n_open=DNS_SLOW_N)
+    db.executemany("INSERT INTO dns_checks(server,ts,latency,success) VALUES(?,?,?,?)", rows)
 
 
-def public_ip_worker():
-    while True:
-        for key, url in (("public_ip", "https://api.ipify.org?format=json"),
-                         ("public_ipv6", "https://api64.ipify.org?format=json")):
-            try:
-                db.set_meta(key, requests.get(url, timeout=5).json().get("ip"))
-            except Exception:
-                pass
-        time.sleep(get_intervals()["public_ip_interval_seconds"])
+def public_ip_once():
+    for key, url in (("public_ip", "https://api.ipify.org?format=json"),
+                     ("public_ipv6", "https://api64.ipify.org?format=json")):
+        try:
+            db.set_meta(key, requests.get(url, timeout=5).json().get("ip"))
+        except Exception:
+            pass
 
 
 def get_cpu_temp():
@@ -844,104 +1111,102 @@ def get_cpu_temp():
         return None
 
 
-def system_worker():
-    while True:
-        cpu = psutil.cpu_percent(interval=1)
-        mem = psutil.virtual_memory().percent
-        temp = get_cpu_temp()
-        meta = {"cpu_pct": cpu, "mem_pct": mem}
-        if temp is not None:
-            meta["temp_c"] = temp
-        db.set_meta_many(meta)
-        if temp is not None:
-            _hyst("temp", "Raspberry Pi", temp > THRESH["temp_c"],
-                  lambda: raise_incident("temp", "Raspberry Pi", f"Temperatura alta: {temp}°C", "Media"))
-        _hyst("cpu", "Raspberry Pi", cpu > THRESH["cpu_pct"],
-              lambda: raise_incident("cpu", "Raspberry Pi", f"CPU alta: {cpu}%", "Media"), n_open=3)
-        time.sleep(get_intervals()["system_interval_seconds"])
+def system_once():
+    cpu = psutil.cpu_percent(interval=1)
+    mem = psutil.virtual_memory().percent
+    temp = get_cpu_temp()
+    meta = {"cpu_pct": cpu, "mem_pct": mem}
+    try:
+        meta["disk_pct"] = psutil.disk_usage(os.path.dirname(os.path.abspath(db.DB_PATH))).percent
+    except Exception:
+        pass
+    try:
+        meta["db_mb"] = round(sum(os.path.getsize(db.DB_PATH + s) for s in ("", "-wal")
+                                  if os.path.exists(db.DB_PATH + s)) / 1e6, 1)
+    except Exception:
+        pass
+    meta["host_uptime_s"] = int(time.time() - psutil.boot_time())
+    if temp is not None:
+        meta["temp_c"] = temp
+    db.set_meta_many(meta)
+    if temp is not None:
+        _hyst("temp", HOST_LABEL, temp > THRESH["temp_c"],
+              lambda: raise_incident("temp", HOST_LABEL, f"Temperatura alta: {temp}°C", "Media"))
+    _hyst("cpu", HOST_LABEL, cpu > THRESH["cpu_pct"],
+          lambda: raise_incident("cpu", HOST_LABEL, f"CPU alta: {cpu}%", "Media"), n_open=3)
 
 
-def rollup_worker():
-    while True:
-        try:
-            stats.run_rollups()
-        except Exception as e:
-            print("rollup:", e)
-        time.sleep(60)
-
-
-def cert_worker():
-    """Verifica a validade dos certificados dos alvos https a cada 6 h."""
+def cert_once():
+    """Verifica a validade dos certificados dos alvos https (a cada 6 h)."""
     import checks
     warn, crit = int(CFG.get("cert_warn_days", 14)), int(CFG.get("cert_crit_days", 3))
-    time.sleep(30)
-    while True:
-        for t in get_targets():
-            if t.get("type") != "http" or not t["host"].startswith("https://"):
-                continue
-            hp = checks.url_host_port(t["host"])
-            days = checks.cert_days_left(*hp) if hp else None
-            db.set_meta(f"cert_days:{t['name']}", "" if days is None else round(days, 1))
-            if days is None:
-                continue
-            sev = "Alta" if days < crit else "Media"
-            _hyst("cert", t["name"], days < warn,
-                  lambda t=t, days=days, sev=sev: raise_incident(
-                      "cert", t["name"], f"Certificado de {t['name']} expira em {days:.0f} dia(s)", sev))
-        time.sleep(6 * 3600)
+    for t in get_targets():
+        if t.get("type") != "http" or not t["host"].startswith("https://"):
+            continue
+        hp = checks.url_host_port(t["host"])
+        days = checks.cert_days_left(*hp) if hp else None
+        db.set_meta(f"cert_days:{t['name']}", "" if days is None else round(days, 1))
+        if days is None:
+            continue
+        sev = "Alta" if days < crit else "Media"
+        _hyst("cert", t["name"], days < warn,
+              lambda t=t, days=days, sev=sev: raise_incident(
+                  "cert", t["name"], f"Certificado de {t['name']} expira em {days:.0f} dia(s)", sev))
 
 
-def snmp_worker():
+_snmp_due = {}
+
+
+def snmp_once():
     import snmp
-    due = {}
-    while True:
-        for dev in snmp.get_devices():
-            n = dev["name"]
-            if due.get(n, 0) > time.time():
-                continue
-            due[n] = time.time() + dev.get("poll_seconds", 60)
-            try:
-                res = snmp.poll_device(dev)
-                _hyst("snmp", n, False, lambda: None)
-                for key, bad, why in snmp.check_thresholds(dev, res.get("custom", {})):
-                    _hyst("snmpval", f"{n}/{key}", bad,
-                          lambda n=n, key=key, why=why: raise_incident(
-                              "snmpval", f"{n}/{key}", f"{n}: {key} fora do limite ({why})", "Media"))
-            except Exception as e:
-                _hyst("snmp", n, True,
-                      lambda n=n, e=e: raise_incident("snmp", n, f"SNMP sem resposta de {n}: {str(e)[:80]}", "Media"),
-                      n_open=3)
-        time.sleep(5)
+    for dev in snmp.get_devices():
+        n = dev["name"]
+        if _snmp_due.get(n, 0) > time.time():
+            continue
+        _snmp_due[n] = time.time() + dev.get("poll_seconds", 60)
+        try:
+            res = snmp.poll_device(dev)
+            _hyst("snmp", n, False, lambda: None)
+            for key, bad, why in snmp.check_thresholds(dev, res.get("custom", {})):
+                _hyst("snmpval", f"{n}/{key}", bad,
+                      lambda n=n, key=key, why=why: raise_incident(
+                          "snmpval", f"{n}/{key}", f"{n}: {key} fora do limite ({why})", "Media"))
+        except Exception as e:
+            _hyst("snmp", n, True,
+                  lambda n=n, e=e: raise_incident("snmp", n, f"SNMP sem resposta de {n}: {str(e)[:80]}", "Media"),
+                  n_open=3)
 
 
-def sites_worker():
+def sites_once():
     import sites
-    while True:
-        try:
-            sites.watchdog()
-        except Exception as e:
-            print("sites:", e)
-        time.sleep(30)
+    sites.watchdog()
 
 
-def prune_worker():
-    time.sleep(120)
-    while True:
-        try:
-            stats.run_rollups()          # nunca apagar bruto antes de agregar
-            db.prune_old(CFG["history_retention_days"], RAW_DAYS, H1_DAYS)
-            try:
-                import snmp
-                snmp.prune(CFG["history_retention_days"])
-            except Exception:
-                pass
-        except Exception as e:
-            print("prune:", e)
-        time.sleep(3600)
+def prune_once():
+    stats.run_rollups()          # nunca apagar bruto antes de agregar
+    db.prune_old(CFG["history_retention_days"], RAW_DAYS, H1_DAYS)
+    try:
+        import snmp
+        snmp.prune(CFG["history_retention_days"])
+    except Exception:
+        pass
+
 
 
 # -------------------------------------------------------------------- speedtest
+_speed_lock = threading.Lock()
+
+
 def run_speedtest():
+    if not _speed_lock.acquire(blocking=False):
+        raise RuntimeError("Já existe um teste de velocidade em andamento")
+    try:
+        return _run_speedtest()
+    finally:
+        _speed_lock.release()
+
+
+def _run_speedtest():
     result = {"download": None, "upload": None, "latency": None}
     try:
         start = time.time()
@@ -1015,6 +1280,19 @@ def start_all():
     reconcile_incidents()
     warm_state()
     log_event(f"{get_app_name()} iniciado", "Info")
-    for fn in (ping_worker, dns_worker, public_ip_worker, system_worker, rollup_worker,
-               prune_worker, mikrotik_worker, agh_worker, cert_worker, snmp_worker, sites_worker):
-        threading.Thread(target=fn, daemon=True, name=fn.__name__).start()
+    iv = lambda k: (lambda: get_intervals()[k])
+    loops = (
+        ("ping", ping_cycle, lambda: 1, 0),
+        ("dns", dns_once, iv("dns_check_interval_seconds"), 2),
+        ("ip_publico", public_ip_once, iv("public_ip_interval_seconds"), 1),
+        ("sistema", system_once, iv("system_interval_seconds"), 0),
+        ("rollup", stats.run_rollups, lambda: 60, 5),
+        ("limpeza", prune_once, lambda: 3600, 120),
+        ("mikrotik", mikrotik_once, lambda: _setting_interval("mikrotik", 60), 3),
+        ("adguard", agh_once, lambda: _setting_interval("agh", 60), 4),
+        ("certificados", cert_once, lambda: 6 * 3600, 30),
+        ("snmp", snmp_once, lambda: 5, 6),
+        ("sites", sites_once, lambda: 30, 10),
+    )
+    for name, once, get_iv, delay in loops:
+        threading.Thread(target=_loop, args=(name, once, get_iv, delay), daemon=True, name=name).start()

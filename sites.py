@@ -56,6 +56,17 @@ def ingest(site, rows):
             prev[key] = lat
         batch.append((key, ts, lat, int(lat is not None), jit))
     db.insert_pings(batch)
+    # amostras atrasadas (buffer do agente) que caem num bucket já agregado: reagrega o trecho,
+    # senão somem do histórico quando o bruto é apagado
+    if batch:
+        try:
+            end5 = float(db.get_meta("rollup5_end") or 0)
+            oldest = min(b[1] for b in batch)
+            if end5 and oldest < end5:
+                start = int(oldest // 300) * 300
+                db.rollup_chunk("pings", "pings_5m", 300, start, end5)
+        except Exception:
+            pass
     _last_seen[site] = now
     db.set_meta(f"agent_seen:{site}", now)
     return len(batch)

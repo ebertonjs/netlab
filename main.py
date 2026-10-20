@@ -1,14 +1,16 @@
 import asyncio, json, os, time
+from contextlib import asynccontextmanager
 from typing import List, Optional
 
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response, StreamingResponse
+from fastapi import FastAPI, HTTPException, Request, WebSocket
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import backup
 import checks
 import db
+import dvr
 import monitor
 import notifier
 import security
@@ -19,16 +21,15 @@ import stats
 import zabbix
 
 CFG = monitor.CFG
-APP_VERSION = "3.0"
-app = FastAPI(title="NetNOC", docs_url=None, redoc_url=None, openapi_url=None)
-app.add_middleware(security.AuthMiddleware)
+APP_VERSION = "3.3"
+STARTED_AT = time.time()
 
 RANGE_SECONDS = {"5m": 300, "1h": 3600, "24h": 86400, "7d": 7 * 86400, "30d": 30 * 86400}
 
 
-@app.on_event("startup")
 def startup():
     monitor.start_all()
+    dvr.start()
     pw = security.ensure_admin()
     if pw:
         banner = "=" * 60
@@ -36,6 +37,17 @@ def startup():
               f" (altere em Configurações → Segurança ou: python manage.py set-password admin)\n{banner}\n", flush=True)
     if security.AUTH_OFF:
         print("AVISO: autenticação DESLIGADA (NETNOC_AUTH=off)", flush=True)
+
+
+@asynccontextmanager
+async def lifespan(_app):
+    startup()          # on_event("startup") está deprecated
+    yield
+    dvr.shutdown()     # encerra o go2rtc junto com o NetNOC
+
+
+app = FastAPI(title="NetNOC", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
+app.add_middleware(security.AuthMiddleware)
 
 
 def actor(request: Request):
@@ -175,6 +187,20 @@ def dns_status():
     return out
 
 
+@app.get("/api/dns/history")
+def dns_history(range: str = "1h"):
+    s = secs(range) if range in RANGE_SECONDS else 3600
+    b = 60 if s <= 3600 else (300 if s <= 86400 else (1800 if s <= 7 * 86400 else 3600))
+    rows = db.query(
+        f"SELECT server, CAST(ts/{b} AS INTEGER)*{b} t, AVG(CASE WHEN success=1 THEN latency END) lat, "
+        f"100.0*SUM(success)/COUNT(*) ok FROM dns_checks WHERE ts>=? GROUP BY server, t ORDER BY server, t",
+        (time.time() - s,))
+    out = {}
+    for r in rows:
+        out.setdefault(r["server"], []).append({"ts": r["t"], "latency": r["lat"], "ok_pct": round(r["ok"], 1)})
+    return out
+
+
 @app.get("/api/incidents")
 def incidents(active_only: bool = False, days: Optional[float] = None):
     where, params = [], []
@@ -211,16 +237,18 @@ def speedtest_history(limit: int = 30):
 
 @app.get("/api/history/24h")
 def history_24h(metric: str = "latency"):
+    if metric not in ("latency", "jitter", "loss_pct"):
+        raise HTTPException(400, "Métrica inválida (latency, jitter, loss_pct)")
     s = stats.series(86400)
-    # média entre alvos por bucket
+    # média entre alvos por bucket (antes o parâmetro metric era ignorado)
     acc = {}
     for rows in s.values():
         for r in rows:
-            if r["latency"] is not None:
+            if r.get(metric) is not None:
                 a = acc.setdefault(r["ts"], [0, 0])
-                a[0] += r["latency"]
+                a[0] += r[metric]
                 a[1] += 1
-    return [{"ts": ts, "latency": a[0] / a[1]} for ts, a in sorted(acc.items())]
+    return [{"ts": ts, metric: a[0] / a[1]} for ts, a in sorted(acc.items())]
 
 
 @app.get("/api/topology")
@@ -482,7 +510,10 @@ def promote_dhcp_host_ep(host_id: int, item: PromoteIn, request: Request):
 @app.post("/api/speedtest/run")
 def speedtest_run(request: Request):
     audit(request, "speedtest")
-    return monitor.run_speedtest()
+    try:
+        return monitor.run_speedtest()
+    except RuntimeError as e:
+        raise HTTPException(409, str(e))
 
 
 class TargetIn(BaseModel):
@@ -546,6 +577,29 @@ def create_target(item: TargetIn, request: Request):
     return {"ok": True}
 
 
+class TargetUpdateIn(BaseModel):
+    parent: Optional[str] = None
+    interval: Optional[int] = None
+    set_parent: bool = False
+    set_interval: bool = False
+
+
+@app.post("/api/settings/targets/{name}/update")
+def update_target_ep(name: str, item: TargetUpdateIn, request: Request):
+    kw = {}
+    if item.set_parent:
+        kw["parent"] = item.parent
+    if item.set_interval:
+        kw["interval"] = item.interval
+    try:
+        monitor.update_target(name, **kw)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    stats.cache_clear()
+    audit(request, "target~", f"{name} {kw}")
+    return {"ok": True}
+
+
 @app.delete("/api/settings/targets/{name}")
 def delete_target(name: str, request: Request):
     monitor.remove_target(name)
@@ -579,6 +633,7 @@ def clear_history(request: Request):
         monitor._win.clear()
         monitor._consec.clear()
         monitor._pending.clear()
+        monitor._clean_since.clear()
     stats.cache_clear()
     monitor.log_event("Histórico limpo pelo usuário", "Info")
     audit(request, "history-clear")
@@ -724,7 +779,7 @@ def notify_test(channel: str, request: Request):
     try:
         notifier.send_channel(channel, "Info", f"✅ Teste de alerta {monitor.get_app_name()} — canal funcionando!", None, "test")
     except Exception as e:
-        raise HTTPException(400, f"Falha: {str(e)[:200]}")
+        raise HTTPException(400, f"Falha: {notifier._safe_err(e)}")
     audit(request, "notify-test", channel)
     return {"ok": True}
 
@@ -958,6 +1013,9 @@ def metrics():
                     ("temp_c", "netnoc_host_temp_celsius")):
         if m.get(k) is not None:
             L.append(f"{name} {float(m[k])}")
+    L.append("# TYPE netnoc_worker_ok gauge")
+    for w in monitor.worker_health():
+        L.append(f'netnoc_worker_ok{{worker="{_lbl(w["name"])}"}} {1 if w["status"] == "ok" else 0}')
     L.append("# TYPE netnoc_cert_days_left gauge")
     for n, d in certs_ep().items():
         if d is not None:
@@ -1075,12 +1133,12 @@ def login_ep(data: LoginIn, request: Request):
     if not _same_origin(request):
         raise HTTPException(403, "Origem inválida")
     ip = (request.client.host if request.client else "?")
-    if security.rate_limited(ip):
-        raise HTTPException(429, "Muitas tentativas. Aguarde alguns minutos.")
     user = data.user.strip()
+    if security.rate_limited(ip, user):
+        raise HTTPException(429, "Muitas tentativas. Aguarde alguns minutos.")
     role = security.verify(user, data.password)
     if role is None:
-        security.register_fail(ip)
+        security.register_fail(ip, user)
         db.audit(user[:40], ip, "login_falhou", "")
         raise HTTPException(401, "Usuário ou senha inválidos")
     ttl = security.SESSION_TTL_LONG if data.remember else security.SESSION_TTL
@@ -1107,6 +1165,177 @@ def manifest_ep():
     m["name"] = name
     m["short_name"] = name[:12]
     return JSONResponse(m, media_type="application/manifest+json", headers={"Cache-Control": "no-cache"})
+
+
+# ------------------------------------------------------------ interface v3
+@app.get("/")
+def app_page():
+    return FileResponse("static/app.html", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/index.html")
+def old_index_redirect():
+    """Favoritos/autocompletar antigos (/index.html) abrem a interface nova; a clássica fica em /classic."""
+    return RedirectResponse("/", status_code=302)
+
+
+@app.get("/classic")
+def classic_page():
+    """Interface antiga (configurações avançadas: SNMP, notificações, usuários, backup...)."""
+    return FileResponse("static/index.html", headers={"Cache-Control": "no-cache"})
+
+
+# ------------------------------------------------------------ câmeras (DVR Intelbras)
+@app.get("/api/settings/dvr")
+def dvr_get(request: Request):
+    need_admin(request)
+    return dvr.masked()
+
+
+@app.post("/api/settings/dvr")
+def dvr_set(data: dict, request: Request):
+    try:
+        dvr.save_cfg(data)
+    except (ValueError, TypeError) as e:
+        raise HTTPException(400, str(e))
+    audit(request, "dvr", data.get("host"))
+    return {"ok": True}
+
+
+@app.post("/api/settings/dvr/test")
+def dvr_test(request: Request):
+    try:
+        return dvr.test()
+    except Exception as e:
+        raise HTTPException(400, f"Não foi possível falar com o DVR: {dvr._safe_err(e)}")
+
+
+@app.get("/api/cam/status")
+def cam_status():
+    return dvr.status()
+
+
+@app.get("/api/cam/viewers")
+def cam_viewers():
+    return {"viewers": dvr.viewers()}
+
+
+@app.get("/api/cam/snapshot/{ch}")
+def cam_snapshot(ch: int, last: bool = False):
+    """Foto do canal. last=1 devolve a última imagem boa guardada (sem tocar no DVR)."""
+    if last:
+        lg = dvr.last_good(ch)
+        if lg:
+            return Response(lg[1], media_type="image/jpeg", headers={"Cache-Control": "no-store", "X-Snapshot-Ts": str(int(lg[0]))})
+    try:
+        data, ts = dvr.snapshot(ch)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:
+        raise HTTPException(502, f"DVR: {dvr._safe_err(e)}")
+    return Response(data, media_type="image/jpeg", headers={"Cache-Control": "no-store", "X-Snapshot-Ts": str(int(ts))})
+
+
+@app.websocket("/api/cam/ws")
+async def cam_ws(websocket: WebSocket, src: str = ""):
+    """Ponte navegador ⇄ go2rtc (localhost). Autenticação e origem já checadas no middleware.
+    Do navegador só passa o pedido "mse" (lista de codecs); nenhum outro comando do go2rtc é exposto."""
+    if not dvr.valid_src(src):
+        await websocket.close(code=1008)
+        return
+    import websockets
+    await websocket.accept()
+    try:
+        async with websockets.connect(f"ws://{dvr.GO2RTC_ADDR}/api/ws?src={src}", max_size=None,
+                                      open_timeout=6, ping_interval=None, compression=None) as up:
+            async def from_browser():
+                while True:
+                    m = await websocket.receive()
+                    if m["type"] == "websocket.disconnect":
+                        return
+                    txt = m.get("text")
+                    if txt:
+                        try:
+                            j = json.loads(txt)
+                        except Exception:
+                            continue
+                        if j.get("type") == "mse" and isinstance(j.get("value"), str) and len(j["value"]) < 500:
+                            await up.send(json.dumps({"type": "mse", "value": j["value"]}))
+
+            async def from_go2rtc():
+                async for m in up:
+                    if isinstance(m, (bytes, bytearray)):
+                        await websocket.send_bytes(bytes(m))
+                    else:
+                        await websocket.send_text(m)
+
+            tasks = [asyncio.create_task(from_browser()), asyncio.create_task(from_go2rtc())]
+            _, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            for t in pending:
+                t.cancel()
+    except Exception as e:
+        try:
+            await websocket.send_text(json.dumps({"type": "error", "value": "vídeo indisponível: " + dvr._safe_err(e)}))
+        except Exception:
+            pass
+    finally:
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+
+# ------------------------------------------------------------ aparência (skins)
+UI_SKINS = {"glass": ("dark", "light"), "terminal": ("verde", "ambar", "ciano"),
+            "grafana": ("dark", "light"), "material": ("light", "dark")}
+UI_DEFAULT = {"skin": "glass", "mode": "dark", "accent": "#6750a4"}
+
+
+@app.get("/api/settings/ui")
+def ui_get():
+    """Skin padrão do servidor (cada aparelho pode sobrescrever localmente)."""
+    try:
+        d = dict(UI_DEFAULT, **json.loads(db.get_setting("ui_default", "{}") or "{}"))
+    except Exception:
+        d = dict(UI_DEFAULT)
+    return d
+
+
+class UiIn(BaseModel):
+    skin: str
+    mode: str
+    accent: str = "#6750a4"
+
+
+@app.post("/api/settings/ui")
+def ui_set(item: UiIn, request: Request):
+    import re as _re
+    if item.skin not in UI_SKINS or item.mode not in UI_SKINS[item.skin]:
+        raise HTTPException(400, "Skin ou modo inválido")
+    if not _re.fullmatch(r"#[0-9a-fA-F]{6}", item.accent or ""):
+        raise HTTPException(400, "Cor inválida (use #RRGGBB)")
+    db.set_setting("ui_default", json.dumps({"skin": item.skin, "mode": item.mode, "accent": item.accent.lower()}))
+    audit(request, "ui-default", f"{item.skin}/{item.mode}")
+    return {"ok": True}
+
+
+@app.get("/api/health/workers")
+def workers_ep():
+    return monitor.worker_health()
+
+
+@app.get("/api/system")
+def system_ep():
+    m = {r["key"]: r["value"] for r in db.query(
+        "SELECT key,value FROM meta WHERE key IN ('cpu_pct','mem_pct','temp_c','disk_pct','db_mb','host_uptime_s')")}
+    num = lambda v: float(v) if v not in (None, "") else None
+    w = monitor.worker_health()
+    return {"host_label": monitor.HOST_LABEL, "version": APP_VERSION, "app_uptime_s": int(time.time() - STARTED_AT),
+            "cpu_pct": num(m.get("cpu_pct")), "mem_pct": num(m.get("mem_pct")), "temp_c": num(m.get("temp_c")),
+            "disk_pct": num(m.get("disk_pct")), "db_mb": num(m.get("db_mb")),
+            "host_uptime_s": num(m.get("host_uptime_s")),
+            "workers": w, "workers_bad": [x["name"] for x in w if x["status"] != "ok"],
+            "window_seconds": monitor.WINDOW_S}
 
 
 @app.get("/status")

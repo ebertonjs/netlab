@@ -1,0 +1,206 @@
+/* ================================================================
+   Skin GRAFANA / ZABBIX — painéis planos e densos, menu lateral fixo,
+   paleta clássica do Grafana. Claro e escuro.
+   ================================================================ */
+[data-skin="grafana"] {
+  --font: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --blur-k: 0;
+  --r-xl: 4px; --r-lg: 4px; --r-md: 3px; --r-sm: 2px; --r-card: 4px; --r-pill: 3px;
+  --dock-h: 0px;
+  --nav-w: 208px;
+  --green: #73bf69; --red: #f2495c; --yellow: #fade2a; --blue: #5794f2; --orange: #ff9830; --purple: #b877d9; --grey: #8e8e9e;
+  --accent: #3d71d9; --accent-2: #6e9fff; --spark: #73bf69;
+  --c1: #73bf69; --c2: #f2cc0c; --c3: #8ab8ff; --c4: #ff780a; --c5: #f2495c; --c6: #5794f2; --c7: #b877d9; --c8: #705da0;
+}
+[data-skin="grafana"][data-theme="dark"] {
+  --bg-a: #111217; --bg-b: #111217; --bg-c: #111217;
+  --text: #ccccdc; --text-2: #b4b4c4; --muted: #8e8e9e;
+  --glass: #181b1f; --glass-2: #1e2125; --glass-hi: transparent;
+  --stroke: rgba(204, 204, 220, .12);
+  --shadow: none;
+  --side: #181b1f; --side-text: #ccccdc;
+  --btn: rgba(204, 204, 220, .08); --btn-ico: #ccccdc;
+  --rule: rgba(204, 204, 220, .12); --track: rgba(204, 204, 220, .1);
+  --sheet-panel: #181b1f; --sheet-main: #181b1f;
+  --tile: #22252b; --art-fade: #181b1f; --chart-grid: rgba(204, 204, 220, .08);
+  color-scheme: dark;
+}
+[data-skin="grafana"][data-theme="light"] {
+  --bg-a: #f4f5f5; --bg-b: #f4f5f5; --bg-c: #f4f5f5;
+  --text: #24292e; --text-2: #3b4148; --muted: #6a7179;
+  --glass: #ffffff; --glass-2: #ffffff; --glass-hi: transparent;
+  --stroke: rgba(36, 41, 46, .12);
+  --shadow: none;
+  --side: #ffffff; --side-text: #24292e;
+  --btn: rgba(36, 41, 46, .06); --btn-ico: #3b4148;
+  --rule: rgba(36, 41, 46, .12); --track: rgba(36, 41, 46, .08);
+  --sheet-panel: #ffffff; --sheet-main: #ffffff;
+  --tile: #f4f5f5; --art-fade: #ffffff; --chart-grid: rgba(36, 41, 46, .08);
+  --green: #1a7f4b; --red: #d10e5c; --yellow: #c79400; --blue: #1f62e0; --spark: #1a7f4b;
+  --c1: #3d9a3d; --c2: #c79400; --c3: #1f62e0; --c4: #e55c00; --c5: #d10e5c; --c6: #0d84a5; --c7: #8f3bb8; --c8: #5a4b9c;
+  color-scheme: light;
+}
+
+[data-skin="grafana"] body { background: var(--bg-a); font-size: 13px; }
+[data-skin="grafana"] .bg { background: var(--bg-a); }
+[data-skin="grafana"] .bg::after { display: none; }
+[data-skin="grafana"] :is(.glass, .glass-dark, .panel, .tvg-glass, .tvg-dark) { box-shadow: none; }
+[data-skin="grafana"] .glass-dark { color: var(--side-text); }
+
+/* ---------- menu lateral fixo (no lugar do dock) ---------- */
+[data-skin="grafana"] .dock {
+  top: 0; bottom: 0; left: 0; transform: none; width: var(--nav-w); max-width: none;
+  flex-direction: column; gap: 2px; padding: 60px 8px 12px; background: var(--glass); border-right: 1px solid var(--stroke);
+  overflow-y: auto; overflow-x: hidden;
+}
+[data-skin="grafana"] .dock::before {
+  content: "◆ NetNOC"; position: absolute; top: 16px; left: 18px; font-weight: 700; font-size: 15px; color: var(--accent); letter-spacing: .02em;
+}
+[data-skin="grafana"] .dock .round {
+  width: 100%; height: 36px; border-radius: 3px; display: flex; align-items: center; gap: 12px; padding: 0 12px;
+  background: transparent; border: 0; box-shadow: none; color: var(--text-2); font-size: 13.5px; font-weight: 500; justify-content: flex-start;
+}
+[data-skin="grafana"] .dock .round svg { width: 17px; height: 17px; flex: none; }
+[data-skin="grafana"] .dock .round:hover { transform: none; background: var(--btn); color: var(--text); }
+[data-skin="grafana"] .dock .round .lbl { display: inline; }
+[data-skin="grafana"] .dock .round .key { display: inline; margin-left: auto; font-size: 11px; color: var(--muted); }
+[data-skin="grafana"] .dock .round.active { background: var(--btn); color: var(--text); box-shadow: inset 3px 0 0 var(--accent); }
+[data-skin="grafana"] .dock .round .count { position: static; margin-left: auto; order: 3; }
+[data-skin="grafana"] .dock .round:has(.count:not([hidden])) .key { display: none; }
+
+/* ---------- layout: mais denso ---------- */
+[data-skin="grafana"] .shell {
+  padding: 14px 18px 14px calc(var(--nav-w) + 18px); column-gap: 14px; row-gap: 14px;
+  --side-w: 280px;
+}
+[data-skin="grafana"] .dateblock { text-align: left; padding-top: 4px; }
+[data-skin="grafana"] .date { font-size: 18px; font-weight: 600; }
+[data-skin="grafana"] .subdate { font-size: 12.5px; color: var(--muted); }
+[data-skin="grafana"] .chips { padding: 4px 0 0; gap: 6px; -webkit-mask-image: none; mask-image: none; flex-wrap: wrap; }
+[data-skin="grafana"] .chip { height: 30px; padding: 0 10px; font-size: 12px; font-weight: 500; background: var(--glass); box-shadow: none; }
+[data-skin="grafana"] .chip:hover { transform: none; border-color: var(--accent); }
+[data-skin="grafana"] .chip .dot { box-shadow: none; width: 8px; height: 8px; }
+[data-skin="grafana"] .me { padding-top: 0; }
+[data-skin="grafana"] .avatar, [data-skin="grafana"] .avatar#themeBtn {
+  width: 34px; height: 34px; border-radius: 3px; background: var(--glass); border: 1px solid var(--stroke); color: var(--text); box-shadow: none; font-size: 14px;
+}
+[data-skin="grafana"] .avatar svg { width: 17px; height: 17px; }
+[data-skin="grafana"] .avatar .badge { width: 9px; height: 9px; border-width: 1px; }
+
+/* painel lateral como "stat panels" */
+[data-skin="grafana"] .side { padding: 0; border-radius: 4px; }
+[data-skin="grafana"] .side::before {
+  content: "Visão geral"; display: block; padding: 10px 14px; font-size: 13px; font-weight: 600; border-bottom: 1px solid var(--stroke);
+}
+[data-skin="grafana"] .side > * { margin-left: 14px; margin-right: 14px; }
+[data-skin="grafana"] .clock { font-size: 54px; font-weight: 500; margin-top: 10px; letter-spacing: -.01em; }
+[data-skin="grafana"] .rule { margin: 12px 14px; }
+[data-skin="grafana"] .now { justify-content: flex-start; gap: 14px; }
+[data-skin="grafana"] .now-icon svg { width: 38px; height: 38px; color: var(--green) !important; }
+[data-skin="grafana"] .now-val { font-size: 36px; font-weight: 500; color: var(--green); }
+[data-skin="grafana"] .now-sub { text-align: left; }
+[data-skin="grafana"] .hour { font-size: 12px; grid-template-columns: 50px 16px 48px 1fr 48px; }
+[data-skin="grafana"] .track { height: 8px; border-radius: 1px; }
+[data-skin="grafana"] .knob { width: 4px; height: 14px; top: -3px; border-radius: 1px; background: var(--accent); box-shadow: none; }
+[data-skin="grafana"] .hour .ico svg { color: var(--muted) !important; }
+[data-skin="grafana"] .agenda .ev { font-size: 12.5px; margin-bottom: 8px; }
+
+/* cards densos, cabeçalho de painel */
+[data-skin="grafana"] .grid { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); grid-auto-rows: 132px; gap: 10px; padding: 0; }
+[data-skin="grafana"] .card { border: 1px solid var(--stroke); animation: none; }
+[data-skin="grafana"] .card:hover { transform: none; border-color: var(--accent); }
+[data-skin="grafana"] .card.off { border-color: var(--red); box-shadow: inset 0 3px 0 var(--red); }
+[data-skin="grafana"] .card-art .tint, [data-skin="grafana"] .card-art .fade { display: none; }
+[data-skin="grafana"] .card-art .brand { width: 54px; height: 54px; right: 10px; top: 34px; opacity: .08; transform: none; }
+[data-skin="grafana"] .card-art .spark { top: 52px; height: 44px; opacity: .95; }
+[data-skin="grafana"] .card-title { left: 10px; right: 10px; top: 8px; font-size: 13px; font-weight: 600; text-shadow: none; }
+[data-skin="grafana"] .card-title svg { display: none; }
+[data-skin="grafana"] .card-title .kind { font-size: 9.5px; padding: 2px 5px; }
+[data-skin="grafana"] .card-host { left: 10px; top: 26px; font-size: 11px; }
+[data-skin="grafana"] .card-row { left: 8px; right: 8px; bottom: 8px; gap: 6px; }
+[data-skin="grafana"] .rb { width: 26px; height: 26px; box-shadow: none; border-radius: 2px; }
+[data-skin="grafana"] .rb svg { width: 15px; height: 15px; }
+[data-skin="grafana"] .rb.on-green { background: var(--green); box-shadow: none; }
+[data-skin="grafana"] .rb.on-red { background: var(--red); box-shadow: none; }
+[data-skin="grafana"] .pill { height: 26px; padding: 0 7px; font-size: 13px; box-shadow: none; border-radius: 2px; }
+[data-skin="grafana"] .pill small { font-size: 10px; }
+[data-skin="grafana"] .card .pill.loss { display: inline-flex; }
+
+/* sheets como dashboards */
+[data-skin="grafana"] .sheet-wrap {
+  left: var(--nav-w); background: var(--bg-a); padding: 12px 18px; gap: 12px; animation: none;
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+}
+[data-skin="grafana"] body.sheet-open .shell { visibility: hidden; }
+[data-skin="grafana"] .sheet-grabber { display: none; }
+[data-skin="grafana"] .sheet-bar { height: 44px; padding: 0 6px 0 14px; border-radius: 4px; }
+[data-skin="grafana"] .sheet-title { font-size: 15px; color: var(--text); }
+[data-skin="grafana"] .sheet-close { width: 44px; height: 44px; border-radius: 4px; }
+[data-skin="grafana"] .sheet-body { gap: 12px; --side-w: 300px; }
+[data-skin="grafana"] .panel { padding: 14px; border-radius: 4px; border: 1px solid var(--stroke); }
+[data-skin="grafana"] .seg { border-radius: 3px; padding: 2px; }
+[data-skin="grafana"] .seg button, [data-skin="grafana"] .tbtn { height: 30px; border-radius: 2px; font-size: 12.5px; font-weight: 500; }
+[data-skin="grafana"] .seg button.on { background: var(--accent); color: #fff; }
+[data-skin="grafana"] .tbtn { background: var(--btn); color: var(--text); }
+[data-skin="grafana"] .tbtn.primary { background: var(--accent); color: #fff; }
+[data-skin="grafana"] .tbtn.danger { background: var(--red); color: #fff; }
+[data-skin="grafana"] .stat { border-radius: 4px; border: 1px solid var(--stroke); background: var(--glass); padding: 10px 12px; }
+[data-skin="grafana"] .stat .si, [data-skin="grafana"] .orb, [data-skin="grafana"] .tvg-orb, [data-skin="grafana"] .tvg-logo {
+  box-shadow: none !important; background: var(--accent) !important; border-radius: 3px; animation: none;
+}
+[data-skin="grafana"] :is(.stat .si) { width: 34px; height: 34px; }
+[data-skin="grafana"] :is(.stat.green .si, .orb.green, .tvg-orb:not(.red):not(.yellow):not(.grey):not(.blue):not(.orange)) { background: var(--green) !important; }
+[data-skin="grafana"] :is(.stat.red .si, .orb.red, .tvg-orb.red) { background: var(--red) !important; }
+[data-skin="grafana"] :is(.stat.blue .si, .orb.blue, .tvg-orb.blue) { background: var(--blue) !important; }
+[data-skin="grafana"] :is(.orb.grey, .tvg-orb.grey) { background: var(--grey) !important; }
+[data-skin="grafana"] .tvg-orb.yellow { background: var(--yellow) !important; color: #000; }
+[data-skin="grafana"] .tvg-orb.orange, [data-skin="grafana"] .tvg-logo { background: var(--orange) !important; }
+[data-skin="grafana"] .stat b { font-size: 12px; color: var(--muted); font-weight: 500; }
+[data-skin="grafana"] .stat span { font-size: 18px; color: var(--text); font-weight: 600; }
+[data-skin="grafana"] .tile { border-radius: 4px; border: 1px solid var(--stroke); background: var(--glass); }
+[data-skin="grafana"] .li { border-radius: 3px; padding: 8px 12px; font-size: 13px; }
+[data-skin="grafana"] .tbl td { padding: 7px 10px; }
+[data-skin="grafana"] .tbl td:first-child, [data-skin="grafana"] .tbl td:last-child { border-radius: 0; }
+[data-skin="grafana"] .tbl { border-spacing: 0 2px; }
+[data-skin="grafana"] .inp { height: 34px; border-radius: 2px; font-size: 13px; }
+[data-skin="grafana"] .ctrl { border-radius: 3px; height: 30px; background: var(--btn); color: var(--text); }
+[data-skin="grafana"] .callout { border-radius: 3px; }
+[data-skin="grafana"] .sec h3 { font-size: 13.5px; }
+[data-skin="grafana"] .node-orb { filter: none; }
+
+/* Modo TV no estilo "kiosk" do Grafana */
+[data-skin="grafana"] .tvg { gap: .7em; padding: 1em 1.2em .8em; }
+[data-skin="grafana"] .tvg .bg { background: var(--bg-a); }
+[data-skin="grafana"] .tvg-sc { gap: .7em; animation-duration: .3s; }
+[data-skin="grafana"] .tvg-glass, [data-skin="grafana"] .tvg-dark { border-radius: .2em; border: 1px solid var(--stroke); }
+[data-skin="grafana"] .tvg-dark { background: var(--glass); color: var(--text); }
+[data-skin="grafana"] .tvg-card { border-radius: .2em; }
+[data-skin="grafana"] .tvg-card .tint, [data-skin="grafana"] .tvg-card .fade { display: none; }
+[data-skin="grafana"] .tvg-card.off { box-shadow: inset 0 .25em 0 var(--red); }
+[data-skin="grafana"] .tvg-card.warn { box-shadow: inset 0 .25em 0 var(--yellow); }
+[data-skin="grafana"] .tvg-card .lat { font-weight: 500; color: var(--green); }
+[data-skin="grafana"] .tvg-card .lat.down { color: var(--red); }
+[data-skin="grafana"] .tvg-ring .val b { font-weight: 500; }
+[data-skin="grafana"] .tvg-clock b { font-weight: 500; font-size: 2.6em; }
+[data-skin="grafana"] .tvg-kpi { border-radius: .2em; }
+[data-skin="grafana"] .tvg-li, [data-skin="grafana"] .tvg-trio div { border-radius: .15em; }
+[data-skin="grafana"] .tvg-dark .tvg-li, [data-skin="grafana"] .tvg-trio div { background: var(--tile); }
+[data-skin="grafana"] .tvg-alert::before { background: rgba(17, 18, 23, .8); backdrop-filter: none; }
+[data-skin="grafana"][data-theme="light"] .tvg-alert::before { background: rgba(244, 245, 245, .85); }
+[data-skin="grafana"] .tvg-abox { border-top: .35em solid var(--red) !important; border-radius: .25em; }
+[data-skin="grafana"] .tvg-ctl button, [data-skin="grafana"] .tvg-dots { border-radius: .2em; }
+
+/* celular: o menu lateral vira barra inferior */
+@media (max-width: 860px) {
+  [data-skin="grafana"] { --nav-w: 0px; --dock-h: 60px; }
+  [data-skin="grafana"] .dock {
+    top: auto; bottom: 0; left: 0; right: 0; width: auto; height: 58px; flex-direction: row; padding: 0 6px;
+    border-right: 0; border-top: 1px solid var(--stroke); overflow-x: auto;
+  }
+  [data-skin="grafana"] .dock::before { display: none; }
+  [data-skin="grafana"] .dock .round { width: 52px; height: 52px; padding: 0; justify-content: center; flex: none; }
+  [data-skin="grafana"] .dock .round .lbl, [data-skin="grafana"] .dock .round .key { display: none; }
+  [data-skin="grafana"] .dock .round.active { box-shadow: inset 0 -3px 0 var(--accent); }
+  [data-skin="grafana"] .shell { padding: 12px 12px calc(var(--dock-h) + 10px); }
+  [data-skin="grafana"] .sheet-wrap { left: 0; padding-bottom: 66px; }
+}
