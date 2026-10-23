@@ -991,6 +991,18 @@
                 if (await act(() => post('/api/settings/intervals', body), 'Intervalos salvos')) ctx.reopen();
               }, 'primary'),
               tbtn('Usar recomendados', 'bolt', () => { for (const k in RECOMMENDED) ins[k].value = RECOMMENDED[k]; })))));
+        const sa = await api('/api/settings/speedtest').catch(() => null);
+        if (sa) {
+          const [saSw, saEn] = sw('Rodar o teste de velocidade todo dia', sa.enabled);
+          const saAt = inp({type: 'time', value: sa.time, style: {maxWidth: '140px'}});
+          R.append(sec('gauge', 'Speedtest automático',
+            h('div', {class: 'form'}, saSw, field('Horário', saAt),
+              h('div', {class: 'hint', text: 'Baixa ~25 MB e envia ~5 MB uma vez por dia. Prefira um horário de rede ociosa (madrugada). O resultado aparece na página inicial.'}),
+              h('div', {}, tbtn('Salvar', 'check', async () => {
+                if (needAdmin()) return;
+                await act(() => post('/api/settings/speedtest', {enabled: saEn.checked, time: saAt.value}), 'Speedtest automático salvo');
+              }, 'primary')))));
+        }
         const an = await api('/api/settings/appname');
         const nameIn = inp({value: an.name, maxlength: 40});
         R.append(sec('home', 'Nome do painel', h('div', {class: 'form'}, nameIn, h('div', {}, tbtn('Salvar', 'check', async () => {

@@ -21,7 +21,7 @@ import stats
 import zabbix
 
 CFG = monitor.CFG
-APP_VERSION = "3.3"
+APP_VERSION = "3.4"
 STARTED_AT = time.time()
 
 RANGE_SECONDS = {"5m": 300, "1h": 3600, "24h": 86400, "7d": 7 * 86400, "30d": 30 * 86400}
@@ -1221,14 +1221,16 @@ def cam_viewers():
 
 
 @app.get("/api/cam/snapshot/{ch}")
-def cam_snapshot(ch: int, last: bool = False):
-    """Foto do canal. last=1 devolve a última imagem boa guardada (sem tocar no DVR)."""
+def cam_snapshot(ch: int, last: bool = False, age: float = 2.0):
+    """Foto do canal. last=1 devolve a última imagem boa guardada (sem tocar no DVR).
+    age = idade máxima aceita da foto em cache (s): a página inicial usa ~50 s e várias telas abertas
+    dividem a mesma foto em vez de cada uma acordar o DVR."""
     if last:
         lg = dvr.last_good(ch)
         if lg:
             return Response(lg[1], media_type="image/jpeg", headers={"Cache-Control": "no-store", "X-Snapshot-Ts": str(int(lg[0]))})
     try:
-        data, ts = dvr.snapshot(ch)
+        data, ts = dvr.snapshot(ch, max_age=max(0.0, min(float(age), 120.0)))
     except ValueError as e:
         raise HTTPException(404, str(e))
     except Exception as e:
@@ -1316,6 +1318,174 @@ def ui_set(item: UiIn, request: Request):
         raise HTTPException(400, "Cor inválida (use #RRGGBB)")
     db.set_setting("ui_default", json.dumps({"skin": item.skin, "mode": item.mode, "accent": item.accent.lower()}))
     audit(request, "ui-default", f"{item.skin}/{item.mode}")
+    return {"ok": True}
+
+
+# ============================================================== página inicial (v3.4)
+_OUTAGE_TYPES = ("offline", "local")
+
+
+@stats.ttl_cache(60)
+def _home_slow():
+    """Partes caras da página inicial (disponibilidade 7/30 d, mapa de incidentes): cache de 60 s."""
+    import datetime
+    now = time.time()
+    lt = time.localtime(now)
+    midnight = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, 0, 0, 0, 0, 0, -1))
+    names = [t["name"] for t in monitor.get_targets()]
+
+    def avg_up(seconds):
+        up = stats.uptime_pct(seconds, names)
+        v = [x for x in up.values() if x is not None]
+        return round(sum(v) / len(v), 3) if v else None
+    month0 = time.mktime((lt.tm_year, lt.tm_mon, 1, 0, 0, 0, 0, 0, -1))
+    inc_m = db.query("SELECT started_ts, resolved_ts FROM incidents WHERE started_ts>=? AND type!='dns'", (month0,))
+    dur = [r["resolved_ts"] - r["started_ts"] for r in inc_m if r["resolved_ts"]]
+    # mapa 7 dias x 24 h (hora local) de incidentes de conectividade
+    day0 = datetime.date.today() - datetime.timedelta(days=6)
+    t0 = time.mktime(day0.timetuple())
+    heat = [[0] * 24 for _ in range(7)]
+    for r in db.query("SELECT started_ts FROM incidents WHERE started_ts>=? AND type IN "
+                      "('offline','local','loss','latency','jitter')", (t0,)):
+        d = datetime.datetime.fromtimestamp(r["started_ts"])
+        di = (d.date() - day0).days
+        if 0 <= di < 7:
+            heat[di][d.hour] += 1
+    return {
+        "up_today": avg_up(max(300, now - midnight)), "up_7d": avg_up(7 * 86400), "up_30d": avg_up(30 * 86400),
+        "month_incidents": len(inc_m), "month_mttr_s": round(sum(dur) / len(dur)) if dur else None,
+        "heat": {"days": [(day0 + datetime.timedelta(days=i)).isoformat() for i in range(7)], "cells": heat},
+    }
+
+
+def _home_avail():
+    th = monitor.THRESH
+    targets = monitor.get_targets()
+    parent = {t["name"]: t.get("parent") for t in targets}
+    blocks = stats.availability_blocks(24, 1800)
+
+    def state(n, ok, lat):
+        if not n:
+            return None
+        loss = 100 * (1 - ok / n)
+        if loss >= 50:
+            return "bad"
+        if loss >= th.get("loss_pct", 2) or (lat is not None and lat > th.get("ping_ms", 80)):
+            return "warn"
+        return "ok"
+    raw = {t: [state(n, ok, lat) for (_, n, ok, lat) in rows] for t, rows in blocks.items()}
+    out = []
+    for t in targets:
+        n = t["name"]
+        rows = blocks.get(n, [])
+        st = list(raw.get(n, []))
+        p = parent.get(n)
+        if p and p in raw:              # caiu junto com o pai: isolado, não "fora"
+            st = ["iso" if s == "bad" and i < len(raw[p]) and raw[p][i] == "bad" else s for i, s in enumerate(st)]
+        tot_n = sum(r[1] for r in rows)
+        tot_ok = sum(r[2] for r in rows)
+        out.append({"name": n, "parent": p, "pct": round(100 * tot_ok / tot_n, 2) if tot_n else None,
+                    "blocks": [{"ts": r[0], "s": s, "lat": r[3], "loss": round(100 * (1 - r[2] / r[1]), 1) if r[1] else None}
+                               for r, s in zip(rows, st)]})
+    return out
+
+
+def _home_network():
+    cfg = monitor.get_mikrotik()
+    if not cfg["enabled"]:
+        return None
+    st = monitor.get_mikrotik_status() or {}
+    ifaces = [dict(i, comment=monitor._mt_comment.get(i["name"], "")) for i in monitor.get_mikrotik_interfaces()]
+    hosts = monitor.get_dhcp_hosts()
+    first_sync = min((h["first_seen"] for h in hosts if h["first_seen"]), default=None)
+    now = time.time()
+    active = [h for h in hosts if h["active"]]
+    # "novo" = apareceu nas últimas 24 h e não fazia parte da primeira sincronização
+    new = sorted([h for h in hosts if h["first_seen"] and now - h["first_seen"] < 86400
+                  and first_sync is not None and h["first_seen"] - first_sync > 3600],
+                 key=lambda h: -h["first_seen"])
+    recent = sorted(active, key=lambda h: -(h["last_seen"] or 0))
+    pick = new[:5] + [h for h in recent if h not in new][:max(0, 5 - len(new[:5]))]
+    return {"status": st, "interfaces": ifaces, "active": len(active), "total": len(hosts), "new_24h": len(new),
+            "hosts": [{"name": h["hostname"] or h["mac"], "ip": h["ip"], "new": h in new, "active": bool(h["active"]),
+                       "first_seen": h["first_seen"], "last_seen": h["last_seen"]} for h in pick]}
+
+
+def _home_agh():
+    if not monitor.get_agh()["enabled"]:
+        return None
+    st = monitor.get_agh_stats_latest() or {}
+    try:
+        top = monitor.get_agh_top(3)
+    except Exception:
+        top = {"blocked": []}
+    return {"queries": st.get("num_dns_queries"), "blocked": st.get("num_blocked_filtering"),
+            "blocked_pct": st.get("blocked_pct"), "avg_ms": round((st.get("avg_processing_time") or 0) * 1000, 1),
+            "top_blocked": top.get("blocked", [])[:3], "ts": st.get("ts")}
+
+
+@app.get("/api/home")
+def home_ep():
+    """Tudo o que a página inicial mostra além dos cards, numa chamada (cada parte falha sozinha)."""
+    def safe(fn):
+        try:
+            return fn()
+        except Exception as e:
+            print(f"[home] {fn.__name__}: {e}", flush=True)
+            return None
+    now = time.time()
+    slow = safe(_home_slow) or {}
+    sp = db.query("SELECT ts, download, upload, latency FROM speedtests ORDER BY ts DESC LIMIT 1")
+    last_out = db.query("SELECT target, started_ts, resolved_ts FROM incidents WHERE type IN ('offline','local') "
+                        "ORDER BY started_ts DESC LIMIT 1")
+    active_out = [k for k in monitor._active_incidents if k[0] in _OUTAGE_TYPES]
+    if active_out:
+        quiet = {"since": None, "target": active_out[0][1], "now": True}
+    elif last_out:
+        quiet = {"since": last_out[0]["resolved_ts"], "target": last_out[0]["target"], "now": False}
+    else:
+        first = db.query("SELECT MIN(ts) m FROM pings")
+        quiet = {"since": first[0]["m"] if first else None, "target": None, "now": False}
+    ip_since = db.get_meta("public_ip_since")
+    cam = None
+    try:
+        c = dvr.get_cfg()
+        if c["enabled"] and c["host"]:
+            cam = {"channels": [{"ch": ch, "name": dvr.channel_name(c, ch)} for ch in range(1, c["channels"] + 1)]}
+    except Exception:
+        pass
+    return {
+        "ts": now,
+        "kpi": {**{k: slow.get(k) for k in ("up_today", "up_7d", "up_30d", "month_incidents", "month_mttr_s")},
+                "public_ip": db.get_meta("public_ip"), "public_ip_since": float(ip_since) if ip_since else None,
+                "speedtest": sp[0] if sp else None, "speedtest_auto": monitor.get_speedtest_auto(), "quiet": quiet},
+        "heat": slow.get("heat"),
+        "avail": safe(_home_avail),
+        "net": safe(_home_network),
+        "agh": safe(_home_agh),
+        "dns": safe(dns_status),
+        "system": safe(system_ep),
+        "cams": cam,
+    }
+
+
+class SpeedAutoIn(BaseModel):
+    enabled: bool
+    time: str = "04:30"
+
+
+@app.get("/api/settings/speedtest")
+def speed_auto_get():
+    return monitor.get_speedtest_auto()
+
+
+@app.post("/api/settings/speedtest")
+def speed_auto_set(item: SpeedAutoIn, request: Request):
+    try:
+        monitor.set_speedtest_auto(item.enabled, item.time)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    audit(request, "speedtest-auto", f"{item.enabled} {item.time}")
     return {"ok": True}
 
 

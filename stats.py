@@ -211,6 +211,28 @@ def hourly_bars(hours=24, targets=None):
     return out
 
 
+@ttl_cache(30)
+def availability_blocks(hours=24, block=1800):
+    """{target: [(ts_inicio, n, ok, lat_media|None) x N]} em blocos fixos (padrão 30 min) até agora."""
+    now = time.time()
+    end = int(now // block) * block + block
+    since = end - hours * 3600
+    sql, params = _union(since, block)
+    res = {}
+    for r in db.query(sql, params):
+        res.setdefault(r["target"], {})[r["b"]] = (r["n"] or 0, r["ok"] or 0, r["lat_sum"] or 0)
+    out = {}
+    nb = hours * 3600 // block
+    for t, m in res.items():
+        row = []
+        for i in range(nb):
+            b = since + i * block
+            n, ok, ls = m.get(b, (0, 0, 0))
+            row.append((b, n, ok, round(ls / ok, 1) if ok else None))
+        out[t] = row
+    return out
+
+
 def sparklines(seconds=3600, points=30):
     """Mini-série de latência por alvo para a tabela."""
     s = series(seconds)

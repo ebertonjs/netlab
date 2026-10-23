@@ -7,12 +7,12 @@
   <title>NetNOC</title>
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon-192.png">
-  <link rel="stylesheet" href="glass/fonts.css?v=3.3.0">
-  <link rel="stylesheet" href="glass/glass.css?v=3.3.0">
-  <link rel="stylesheet" href="glass/skins/terminal.css?v=3.3.0">
-  <link rel="stylesheet" href="glass/skins/grafana.css?v=3.3.0">
-  <link rel="stylesheet" href="glass/skins/material.css?v=3.3.0">
-  <script src="glass/skins.js?v=3.3.0"></script>
+  <link rel="stylesheet" href="glass/fonts.css?v=3.4.0">
+  <link rel="stylesheet" href="glass/glass.css?v=3.4.0">
+  <link rel="stylesheet" href="glass/skins/terminal.css?v=3.4.0">
+  <link rel="stylesheet" href="glass/skins/grafana.css?v=3.4.0">
+  <link rel="stylesheet" href="glass/skins/material.css?v=3.4.0">
+  <script src="glass/skins.js?v=3.4.0"></script>
 </head>
 <body>
   <div class="bg" aria-hidden="true"></div>
@@ -37,6 +37,7 @@
       <div class="hours" id="hours"></div>
       <div class="rule"></div>
       <div class="agenda" id="agenda"></div>
+      <div class="hx-heatbox" id="hxHeat"></div>
     </aside>
 
     <!-- ===== chips de status ===== -->
@@ -47,8 +48,11 @@
       <button class="avatar" id="userBtn" type="button" title="Sessão"></button>
     </div>
 
-    <!-- ===== cards dos destinos ===== -->
-    <main class="grid" id="grid" aria-label="Destinos monitorados"></main>
+    <!-- ===== cards dos destinos + blocos de resumo ===== -->
+    <div class="homecol" id="homecol">
+      <main class="grid" id="grid" aria-label="Destinos monitorados"></main>
+      <section class="hx" id="hx" aria-label="Resumo da rede"></section>
+    </div>
   </div>
 
   <!-- ===== dock ===== -->
@@ -73,10 +77,11 @@
   <script src="util.js?v=3.0.0"></script>
   <script src="icons.js"></script>
   <script src="chart.umd.js"></script>
-  <script src="glass/ui-icons.js?v=3.3.0"></script>
-  <script src="glass/app.js?v=3.3.0"></script>
-  <script src="glass/camplayer.js?v=3.3.0"></script>
-  <script src="glass/sheets.js?v=3.3.0"></script>
-  <script src="glass/tv.js?v=3.3.0"></script>
+  <script src="glass/ui-icons.js?v=3.4.0"></script>
+  <script src="glass/app.js?v=3.4.0"></script>
+  <script src="glass/home.js?v=3.4.0"></script>
+  <script src="glass/camplayer.js?v=3.4.0"></script>
+  <script src="glass/sheets.js?v=3.4.0"></script>
+  <script src="glass/tv.js?v=3.4.0"></script>
 </body>
 </html>

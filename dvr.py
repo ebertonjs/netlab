@@ -230,14 +230,45 @@ def snapshot(ch, max_age=2.0, cfg=None):
         hit = _snap.get(ch)
     if hit and time.time() - hit[0] < max_age:
         return hit[1], hit[0]
-    r = _get(cfg, f"/cgi-bin/snapshot.cgi?channel={ch}", timeout=8)
-    data = r.content
-    if not data.startswith(b"\xff\xd8") or len(data) > 4_000_000:
-        raise RuntimeError("DVR não devolveu uma imagem JPEG")
+    data = None
+    if time.time() >= _cgi_off_until[0]:
+        try:
+            r = _get(cfg, f"/cgi-bin/snapshot.cgi?channel={ch}", timeout=8)
+            data = r.content
+            if not data.startswith(b"\xff\xd8") or len(data) > 4_000_000:
+                raise RuntimeError("DVR não devolveu uma imagem JPEG")
+        except Exception as e:
+            data = None
+            # firmware sem CGI de foto (404): usa o vídeo e só tenta o CGI de novo daqui a 30 min
+            if isinstance(e, requests.HTTPError) and e.response is not None and e.response.status_code in (404, 501):
+                _cgi_off_until[0] = time.time() + 1800
+            if not go2rtc_status()["running"]:
+                raise
+    if data is None:
+        data = _frame_from_stream(ch)
     now = time.time()
     with _slock:
         _snap[ch] = (now, data)
     return data, now
+
+
+_cgi_off_until = [0.0]
+_flock = threading.Lock()
+
+
+def _frame_from_stream(ch):
+    """Foto tirada do próprio vídeo (substream) pelo go2rtc — para DVRs com o CGI de foto desligado.
+    Abre o stream só pelo tempo de pegar um quadro; um canal por vez para não pesar no Raspberry Pi."""
+    if not go2rtc_status()["running"]:
+        raise RuntimeError("foto indisponível: CGI do DVR desligado e go2rtc parado")
+    with _flock:
+        r = requests.get(f"http://{GO2RTC_ADDR}/api/frame.jpeg", params={"src": f"ch{ch}"}, timeout=15,
+                         proxies={"http": None, "https": None})
+    r.raise_for_status()
+    data = r.content
+    if not data.startswith(b"\xff\xd8") or len(data) > 4_000_000:
+        raise RuntimeError("go2rtc não devolveu uma imagem JPEG (o ffmpeg está instalado?)")
+    return data
 
 
 def last_good(ch):

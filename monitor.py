@@ -456,6 +456,7 @@ def get_mikrotik_iface_history(iface, seconds):
 
 
 _mt_prev = {}
+_mt_comment = {}           # nome da interface -> comentário (descrição dada no RouterOS)
 
 
 def _poll_mikrotik_once(cfg):
@@ -493,6 +494,7 @@ def _poll_mikrotik_once(cfg):
             rx_bps = max(0, (rx - prev[0]) * 8 / dt)
             tx_bps = max(0, (tx - prev[1]) * 8 / dt)
         _mt_prev[name] = (rx, tx, now)
+        _mt_comment[name] = security.clean_name(iface.get("comment", "") or "", 40)
         rows.append((now, name, running, disabled, rx, tx, rx_bps, tx_bps))
     db.executemany("INSERT INTO mikrotik_iface(ts,name,running,disabled,rx_bytes,tx_bytes,rx_bps,tx_bps) VALUES(?,?,?,?,?,?,?,?)", rows)
     sync_dhcp_leases()
@@ -1098,9 +1100,17 @@ def public_ip_once():
     for key, url in (("public_ip", "https://api.ipify.org?format=json"),
                      ("public_ipv6", "https://api64.ipify.org?format=json")):
         try:
-            db.set_meta(key, requests.get(url, timeout=5).json().get("ip"))
+            ip = requests.get(url, timeout=5).json().get("ip")
         except Exception:
-            pass
+            continue
+        if not ip:
+            continue
+        old = db.get_meta(key)
+        if old != ip:
+            db.set_meta(key + "_since", time.time())
+            if old:
+                log_event(f"IP público mudou: {old} → {ip}", "Info")
+        db.set_meta(key, ip)
 
 
 def get_cpu_temp():
@@ -1233,6 +1243,46 @@ def _run_speedtest():
     return result
 
 
+# speedtest automático (padrão: todo dia às 04:30, quando a rede está ociosa)
+SPEED_AUTO_DEFAULT = {"enabled": True, "time": "04:30"}
+
+
+def get_speedtest_auto():
+    try:
+        c = dict(SPEED_AUTO_DEFAULT, **json.loads(db.get_setting("speedtest_auto", "{}") or "{}"))
+    except Exception:
+        c = dict(SPEED_AUTO_DEFAULT)
+    if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", str(c.get("time", ""))):
+        c["time"] = SPEED_AUTO_DEFAULT["time"]
+    return c
+
+
+def set_speedtest_auto(enabled, at):
+    if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", at or ""):
+        raise ValueError("Horário inválido (use HH:MM)")
+    db.set_setting("speedtest_auto", json.dumps({"enabled": bool(enabled), "time": at}))
+
+
+def speedtest_auto_once():
+    c = get_speedtest_auto()
+    if not c["enabled"]:
+        return
+    lt = time.localtime()
+    hh, mm = map(int, c["time"].split(":"))
+    if (lt.tm_hour, lt.tm_min) < (hh, mm):
+        return
+    today = time.strftime("%Y-%m-%d", lt)
+    if db.get_meta("speedtest_auto_day") == today:
+        return
+    db.set_meta("speedtest_auto_day", today)     # marca antes: falha não repete o teste o dia todo
+    if (lt.tm_hour * 60 + lt.tm_min) - (hh * 60 + mm) > 180:
+        return                                   # NetNOC estava desligado no horário: fica para amanhã
+    try:
+        run_speedtest()
+    except RuntimeError:
+        pass
+
+
 # ------------------------------------------------------------------------ stats
 def get_uptime_pct(target, hours=24):
     return stats.uptime_pct(hours * 3600, [target]).get(target)
@@ -1293,6 +1343,7 @@ def start_all():
         ("certificados", cert_once, lambda: 6 * 3600, 30),
         ("snmp", snmp_once, lambda: 5, 6),
         ("sites", sites_once, lambda: 30, 10),
+        ("speedtest_auto", speedtest_auto_once, lambda: 60, 20),
     )
     for name, once, get_iv, delay in loops:
         threading.Thread(target=_loop, args=(name, once, get_iv, delay), daemon=True, name=name).start()

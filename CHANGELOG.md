@@ -1,5 +1,14 @@
 # Histórico de versões
 
+## v3.4 — página inicial com mais informação
+- **Indicadores**: disponibilidade hoje / 7 d / 30 d, IP público (e há quanto tempo não muda), último speedtest, tempo sem quedas e incidentes do mês com tempo médio de solução.
+- **Disponibilidade por destino**: 24 h em blocos de 30 min (ok, lento, fora, isolado pelo pai), com detalhes ao passar o mouse.
+- **MikroTik**: portas com status, tráfego e comentário de cada interface; **aparelhos na rede** (DHCP) com os novos do dia em destaque.
+- **Câmeras** na página inicial (uma foto por minuto, clique abre ao vivo). DVR sem o CGI de foto: a foto passa a ser tirada do próprio vídeo pelo go2rtc.
+- **AdGuard**, **DNS** e **servidor** (CPU, memória, temperatura, disco) em blocos próprios; **mapa de incidentes** 7 dias × 24 h na coluna da esquerda.
+- **Speedtest automático** diário (padrão 04:30), em Configurações → Geral; entra no backup.
+- Blocos de integrações não configuradas não aparecem. Novo endpoint `/api/home`.
+
 ## v3.3 — câmeras, temas e interface nova
 - **Interface nova** (`/`): relógio, chips de status, cards por destino com sparkline, dock e painéis de Latência, Incidentes, Câmeras, DNS, MikroTik, AdGuard, Topologia, Ferramentas, SLA e Configurações. A interface anterior continua em `/classic`.
 - **4 temas que mudam a interface inteira**: Glass (escuro/claro), NOC Terminal (verde/âmbar/ciano), Grafana/Zabbix e Material You (paleta gerada pela cor de destaque). Escolha por aparelho, padrão definido pelo admin e URL de quiosque (`?skin=&modo=&cor=`).

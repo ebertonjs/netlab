@@ -20,7 +20,7 @@ SECRET_MAP = {
     "zabbix": (("token",), ("url",)),
     "dvr": (("password",), ("host", "http_port", "rtsp_port", "username")),
 }
-PLAIN = ("targets", "dns_servers", "intervals", "app_name", "maintenance", "ui_default")
+PLAIN = ("targets", "dns_servers", "intervals", "app_name", "maintenance", "ui_default", "speedtest_auto")
 
 
 def export_cfg():
@@ -123,6 +123,12 @@ def _validate(data):
                 not _re.fullmatch(r"#[0-9a-fA-F]{6}", str(u.get("accent", "#6750a4"))):
             raise BackupError("ui_default: tema inválido")
         out["ui_default"] = {"skin": u["skin"], "mode": u["mode"], "accent": str(u.get("accent", "#6750a4")).lower()}
+    if "speedtest_auto" in s:
+        sa = s["speedtest_auto"]
+        import re as _re2
+        if not isinstance(sa, dict) or not _re2.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", str(sa.get("time", ""))):
+            raise BackupError("speedtest_auto: horário inválido")
+        out["speedtest_auto"] = {"enabled": bool(sa.get("enabled", True)), "time": sa["time"]}
     if "app_name" in s:
         if not isinstance(s["app_name"], str) or not security.valid_name(s["app_name"], 40):
             raise BackupError("app_name inválido")

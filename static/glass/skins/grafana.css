@@ -99,7 +99,7 @@
 [data-skin="grafana"] .now-icon svg { width: 38px; height: 38px; color: var(--green) !important; }
 [data-skin="grafana"] .now-val { font-size: 36px; font-weight: 500; color: var(--green); }
 [data-skin="grafana"] .now-sub { text-align: left; }
-[data-skin="grafana"] .hour { font-size: 12px; grid-template-columns: 50px 16px 48px 1fr 48px; }
+[data-skin="grafana"] .hour { font-size: 12px; grid-template-columns: 46px 16px 58px 1fr 48px; }
 [data-skin="grafana"] .track { height: 8px; border-radius: 1px; }
 [data-skin="grafana"] .knob { width: 4px; height: 14px; top: -3px; border-radius: 1px; background: var(--accent); box-shadow: none; }
 [data-skin="grafana"] .hour .ico svg { color: var(--muted) !important; }
