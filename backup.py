@@ -90,6 +90,9 @@ def _validate(data):
             sites_ = t.get("sites") or []
             if not isinstance(sites_, list) or any(not security.valid_name(x, 40) or "@" in x for x in sites_):
                 raise BackupError(f"targets: sites inválidos em {n}")
+            g = t.get("group")
+            if g is not None and (not isinstance(g, str) or not security.valid_name(g, 30)):
+                raise BackupError(f"targets: grupo inválido em {n}")
             if n in names:
                 raise BackupError(f"targets: nome duplicado {n}")
             names.add(n)

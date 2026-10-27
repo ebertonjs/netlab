@@ -193,3 +193,10 @@
 }
 
 [data-skin="terminal"] .cam-badge.live { background: var(--red); color: #000; }
+
+/* mapa da rede */
+[data-skin="terminal"] .tm-box { border-radius: 0; box-shadow: none; background: rgba(var(--ph-rgb), .035); }
+[data-skin="terminal"] .tm-ico { border-radius: 0; background: transparent; border: 1px solid var(--stroke); }
+[data-skin="terminal"] .tm-title b::before { content: "> "; opacity: .55; }
+[data-skin="terminal"] .tm-row .s { border-radius: 0; }
+[data-skin="terminal"] .tm-glow { opacity: .3; }

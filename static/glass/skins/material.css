@@ -171,3 +171,9 @@
   [data-skin="material"] .dock { justify-content: flex-start; overflow-x: auto; }
   [data-skin="material"] .dock .round { width: 72px; flex: none; }
 }
+
+/* mapa da rede */
+[data-skin="material"] .tm-box { background: var(--m-surface); border-color: transparent; box-shadow: 0 1px 3px rgba(0, 0, 0, .12); backdrop-filter: none; -webkit-backdrop-filter: none; border-radius: 20px; }
+[data-skin="material"] .tm-ico { background: var(--m-container); color: var(--m-on-container) !important; border-radius: 50%; }
+[data-skin="material"] .tm-kpi { background: var(--m-surface-2); border-radius: 16px; }
+[data-skin="material"] .tm-pkt { fill: var(--m-surface); }

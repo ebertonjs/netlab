@@ -21,7 +21,7 @@ import stats
 import zabbix
 
 CFG = monitor.CFG
-APP_VERSION = "3.4"
+APP_VERSION = "3.5"
 STARTED_AT = time.time()
 
 RANGE_SECONDS = {"5m": 300, "1h": 3600, "24h": 86400, "7d": 7 * 86400, "30d": 30 * 86400}
@@ -144,7 +144,7 @@ def _targets_payload():
             out.append({"name": n, "host": t["host"], "type": t.get("type", "icmp"),
                         "online": s["online"], "latency": s["latency"], "jitter": s["jitter"],
                         "loss_pct": round(s["loss_pct"], 2), "uptime_24h": up.get(n),
-                        "since": first.get(n), "last_fail": last_fail.get(n)})
+                        "since": first.get(n), "last_fail": last_fail.get(n), "group": t.get("group")})
         else:
             out.append({"name": n, "host": t["host"], "type": t.get("type", "icmp"),
                         "online": None, "uptime_24h": None})
@@ -526,6 +526,7 @@ class TargetIn(BaseModel):
     expect_status: Optional[int] = None
     verify_ssl: Optional[bool] = None
     sites: Optional[List[str]] = None
+    group: Optional[str] = None
 
 
 class DnsIn(BaseModel):
@@ -565,6 +566,8 @@ def create_target(item: TargetIn, request: Request):
         extra["verify_ssl"] = item.verify_ssl
     if item.sites:
         extra["sites"] = item.sites
+    if item.group and item.group.strip():
+        extra["group"] = item.group.strip()
     if item.interval:
         if not 2 <= item.interval <= 3600:
             raise HTTPException(400, "Intervalo deve estar entre 2 e 3600 s")
@@ -580,8 +583,10 @@ def create_target(item: TargetIn, request: Request):
 class TargetUpdateIn(BaseModel):
     parent: Optional[str] = None
     interval: Optional[int] = None
+    group: Optional[str] = None
     set_parent: bool = False
     set_interval: bool = False
+    set_group: bool = False
 
 
 @app.post("/api/settings/targets/{name}/update")
@@ -591,6 +596,8 @@ def update_target_ep(name: str, item: TargetUpdateIn, request: Request):
         kw["parent"] = item.parent
     if item.set_interval:
         kw["interval"] = item.interval
+    if item.set_group:
+        kw["group"] = item.group
     try:
         monitor.update_target(name, **kw)
     except ValueError as e:
@@ -1467,6 +1474,135 @@ def home_ep():
         "system": safe(system_ep),
         "cams": cam,
     }
+
+
+# ============================================================== mapa da rede (v3.5)
+def _is_private_host(host):
+    import ipaddress
+    from urllib.parse import urlparse
+    h = str(host or "")
+    if "://" in h:
+        h = urlparse(h).hostname or ""
+    try:
+        ip = ipaddress.ip_address(h)
+        return ip.is_private or ip.is_loopback or ip.is_link_local
+    except ValueError:
+        return h.endswith((".lan", ".local", ".home", ".internal")) or "." not in h
+
+
+@app.get("/api/topomap")
+def topomap_ep():
+    """Mapa em caixas: destinos agrupados (grupo definido no destino ou automático), ligações entre
+    grupos seguindo o "Depende de", estado de cada item e caixas extras (ambiente, câmeras)."""
+    th = monitor.THRESH
+    targets = monitor.get_targets()
+    names = {t["name"] for t in targets}
+    snap = monitor.window_snapshot()
+    active = monitor._active_incidents
+    parent = {t["name"]: (t.get("parent") if t.get("parent") in names else None) for t in targets}
+    has_kids = {p for p in parent.values() if p}
+
+    raw = {}
+    for t in targets:
+        n, sn = t["name"], snap.get(t["name"])
+        if ("offline", n) in active or (sn and not sn["online"] and sn["loss_pct"] >= 50):
+            raw[n] = "bad"
+        elif not sn:
+            raw[n] = "na"
+        elif sn["loss_pct"] >= th.get("loss_pct", 2) or (sn["latency"] or 0) > th.get("ping_ms", 80) or \
+                any((k, n) in active for k in ("loss", "latency", "jitter")):
+            raw[n] = "warn"
+        else:
+            raw[n] = "ok"
+
+    def state(n, seen=()):
+        st = raw[n]
+        p = parent.get(n)
+        if st == "bad" and p and p not in seen and state(p, seen + (n,)) in ("bad", "iso"):
+            return "iso"                    # caiu porque o pai caiu
+        return st
+
+    def gname(t):
+        if t.get("group"):
+            return t["group"]
+        if not _is_private_host(t["host"]):
+            return "Internet"
+        return t["name"] if t["name"] in has_kids else "Rede local"
+
+    groups, order = {}, []
+    for t in targets:
+        g = gname(t)
+        if g not in groups:
+            groups[g] = {"id": g, "label": g, "items": [], "auto": not t.get("group")}
+            order.append(g)
+        sn = snap.get(t["name"]) or {}
+        groups[g]["items"].append({"name": t["name"], "host": t["host"], "state": state(t["name"]),
+                                   "latency": sn.get("latency"), "loss": sn.get("loss_pct")})
+    gof = {t["name"]: gname(t) for t in targets}
+    edges = {}
+    for t in targets:
+        p = parent.get(t["name"])
+        a = gof[p] if p else "__origin"
+        b = gof[t["name"]]
+        if a != b:
+            edges.setdefault((a, b), []).append(t["name"])
+    # grupo sem ligação de entrada (ex.: só itens com pai no mesmo grupo) sai da origem
+    incoming = {b for (_, b) in edges}
+    for g in order:
+        if g not in incoming:
+            edges.setdefault(("__origin", g), [])
+    rank = {"bad": 4, "iso": 3, "warn": 2, "na": 1, "ok": 0}
+    for g in groups.values():
+        sts = [i["state"] for i in g["items"]]
+        g["state"] = ("na" if not sts or all(x == "na" for x in sts) else "bad" if "bad" in sts else
+                      "iso" if all(x == "iso" for x in sts) else "warn" if any(x in ("warn", "iso") for x in sts) else "ok")
+        g["all_down"] = bool(sts) and all(x in ("bad", "iso") for x in sts)
+        g["kind"] = ("internet" if g["id"] == "Internet" else
+                     "device" if len(g["items"]) == 1 and g["items"][0]["name"] == g["id"] else "group")
+    out_edges = []
+    for (a, b), via in edges.items():
+        g = groups[b]
+        st = "bad" if g["all_down"] else ("warn" if g["state"] in ("bad", "iso", "warn") else "ok" if g["state"] == "ok" else "na")
+        if all(x["state"] == "iso" for x in g["items"]) and g["items"]:
+            st = "iso"
+        lats = [i["latency"] for i in g["items"] if i["latency"] is not None and i["state"] != "bad"]
+        out_edges.append({"from": a, "to": b, "state": st, "latency": round(sum(lats) / len(lats), 1) if lats else None})
+
+    # extras
+    sysm = {r["key"]: r["value"] for r in db.query("SELECT key,value FROM meta WHERE key IN ('cpu_pct','temp_c','mem_pct')")}
+    env = [{"name": f"{monitor.HOST_LABEL} · CPU", "value": sysm.get("cpu_pct"), "unit": "%", "warn": 70, "bad": 90},
+           {"name": f"{monitor.HOST_LABEL} · temp.", "value": sysm.get("temp_c"), "unit": " °C", "warn": 65, "bad": 75},
+           {"name": f"{monitor.HOST_LABEL} · memória", "value": sysm.get("mem_pct"), "unit": "%", "warn": 80, "bad": 92}]
+    mt = monitor.get_mikrotik_status() if monitor.get_mikrotik()["enabled"] else None
+    if mt:
+        env += [{"name": "MikroTik · CPU", "value": mt.get("cpu_load"), "unit": "%", "warn": 70, "bad": 90},
+                {"name": "MikroTik · temp.", "value": mt.get("temperature"), "unit": " °C", "warn": 65, "bad": 80}]
+    for e in env:
+        try:
+            v = float(e["value"]) if e["value"] not in (None, "") else None
+        except (TypeError, ValueError):
+            v = None
+        e["value"] = round(v, 1) if v is not None else None
+        e["state"] = "na" if v is None else "bad" if v >= e["bad"] else "warn" if v >= e["warn"] else "ok"
+    env = [e for e in env if e["value"] is not None]
+    cams = None
+    try:
+        c = dvr.get_cfg()
+        if c["enabled"] and c["host"]:
+            host_t = next((t["name"] for t in targets if str(t["host"]) == c["host"]), None)
+            attach = gof.get(host_t) if host_t else next((g for g in order if g != "Internet"), "__origin")
+            cams = {"attach": attach or "__origin", "items": [
+                {"name": dvr.channel_name(c, ch), "ch": ch,
+                 "state": "bad" if ("camera", dvr.channel_name(c, ch)) in active else "ok"} for ch in range(1, c["channels"] + 1)]}
+    except Exception:
+        pass
+    cnt = {k: 0 for k in rank}
+    for g in groups.values():
+        for i in g["items"]:
+            cnt[i["state"]] += 1
+    return {"origin": {"id": "__origin", "label": monitor.HOST_LABEL, "app": monitor.get_app_name()},
+            "groups": [groups[g] for g in order], "edges": out_edges, "env": env, "cams": cams,
+            "summary": {"total": len(targets), **cnt, "incidents": len(active)}}
 
 
 class SpeedAutoIn(BaseModel):

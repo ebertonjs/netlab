@@ -258,6 +258,8 @@ def add_target(name, host, parent=None, extra=None):
     for sname in extra.get("sites") or []:
         if not security.valid_name(sname, 40) or "@" in sname:
             raise ValueError("Nome de site inválido")
+    if extra.get("group") is not None and not security.valid_name(extra["group"], 30):
+        raise ValueError("Nome de grupo inválido (até 30 caracteres)")
     if any(t["name"] == name for t in items):
         raise ValueError("Já existe um destino com esse nome")
     if parent:
@@ -289,7 +291,7 @@ def remove_target(name):
         resolve_incident(itype, tgt, "Destino removido")
 
 
-def update_target(name, parent=..., interval=...):
+def update_target(name, parent=..., interval=..., group=...):
     """Altera pai e/ou intervalo de um destino existente (sem recriar e sem perder histórico)."""
     items = get_targets()
     by = {t["name"]: t for t in items}
@@ -313,6 +315,14 @@ def update_target(name, parent=..., interval=...):
                 raise ValueError("Intervalo deve estar entre 2 e 3600 s")
             t["interval"] = interval
         _next_due.pop(name, None)
+    if group is not ...:
+        group = (group or "").strip()
+        if not group:
+            t.pop("group", None)
+        elif not security.valid_name(group, 30):
+            raise ValueError("Nome de grupo inválido (até 30 caracteres)")
+        else:
+            t["group"] = group
     db.set_setting("targets", json.dumps(items))
     _invalidate_targets()
 

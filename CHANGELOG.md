@@ -1,5 +1,11 @@
 # Histórico de versões
 
+## v3.5 — mapa da rede em caixas
+- **Topologia → Mapa**: destinos agrupados em caixas (Internet, Rede local, equipamentos com dependentes ou o grupo que você definir), ligadas pelo "Depende de", com pacotes animados nas ligações, latência e estado de cada item. Caixas extras: **Ambiente** (CPU/temperatura do servidor e do MikroTik) e **Câmeras**. A vista antiga continua em **Árvore**.
+- Indicadores (online, fora, avisos, isolados), anel de status e problemas atuais no painel lateral.
+- **Modo TV**: a cena Topologia usa o mesmo mapa.
+- Novo campo **Grupo no mapa** em cada destino (card do destino e cadastro); entra no backup. Novo endpoint `/api/topomap`.
+
 ## v3.4 — página inicial com mais informação
 - **Indicadores**: disponibilidade hoje / 7 d / 30 d, IP público (e há quanto tempo não muda), último speedtest, tempo sem quedas e incidentes do mês com tempo médio de solução.
 - **Disponibilidade por destino**: 24 h em blocos de 30 min (ok, lento, fora, isolado pelo pai), com detalhes ao passar o mouse.

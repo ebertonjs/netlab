@@ -51,6 +51,7 @@
       every('targets', 15000, async () => { D.targets = await api('/api/targets'); }),
       every('spark', 15000, async () => { D.spark = await api('/api/sparklines'); }),
       every('topo', 15000, async () => { D.topo = await api('/api/topology'); D.cfg = await api('/api/settings'); }),
+      every('tmap', 10000, async () => { D.tmap = await api('/api/topomap'); }),
       every('sys', 15000, async () => { D.sys = await api('/api/system'); }),
       every('bars', 60000, async () => { D.bars = await api('/api/uptime/bars?hours=6'); }),
       every('inc', 30000, async () => { D.inc = await api('/api/incidents?days=1'); }),
@@ -258,11 +259,10 @@
   const scene2 = {
     build() {
       this.chips = h('div', {class: 'tvg-chips'});
-      this.box = h('section', {class: 'tvg-topo tvg-glass'});
+      this.box = h('section', {class: 'tvg-map tvg-glass'});
       return h('div', {class: 'tvg-sc tvg-s2'}, this.chips, this.box);
     },
     update() {
-      const topo = D.topo;
       const {st} = stateMap();
       const CH = clear(this.chips);
       const vals = Object.values(st);
@@ -272,62 +272,20 @@
       if (cnt('iso')) CH.append(h('span', {class: 'tvg-chip g tvg-glass'}, h('i'), cnt('iso') + ' isolado' + (cnt('iso') > 1 ? 's' : '')));
       if (cnt('warn')) CH.append(h('span', {class: 'tvg-chip a tvg-glass'}, h('i'), cnt('warn') + ' degradado' + (cnt('warn') > 1 ? 's' : '')));
       if (!cnt('bad') && !cnt('iso') && !cnt('warn')) CH.append(h('span', {class: 'tvg-chip tvg-glass'}, h('i'), 'Tudo operacional'));
-      const B = clear(this.box);
-      if (!topo || !topo.nodes || topo.nodes.length < 2) { B.append(h('div', {class: 'tvg-empty', text: 'Nenhum destino cadastrado.'})); return; }
-      // layout em árvore da esquerda para a direita
-      const kids = {};
-      for (const e of topo.edges) (kids[e.source] = kids[e.source] || []).push(e.target);
-      const pos = {}; let leaf = 0, depth = 0;
-      (function walk(id, d, seenW) {
-        if (seenW.has(id)) return; seenW.add(id); depth = Math.max(depth, d);
-        const ch = kids[id] || [];
-        if (!ch.length) { pos[id] = {x: d, y: leaf++}; return; }
-        ch.forEach(c => walk(c, d + 1, seenW));
-        const ys = ch.map(c => pos[c] && pos[c].y).filter(v => v != null);
-        pos[id] = {x: d, y: ys.length ? (Math.min(...ys) + Math.max(...ys)) / 2 : leaf++};
-      })('internet', 0, new Set());
-      const W = Math.max(900, (depth + 1) * 380), Hh = Math.max(420, leaf * 92);
-      const X = x => 120 + (W - 380) * (depth ? x / depth : 0), Y = y => 46 + (Hh - 92) * (leaf > 1 ? y / (leaf - 1) : .5);
-      const NS = 'http://www.w3.org/2000/svg';
-      const svg = document.createElementNS(NS, 'svg');
-      svg.setAttribute('viewBox', `0 0 ${W} ${Hh}`); svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
-      const T = live();
-      for (const e of topo.edges) {
-        const a = pos[e.source], b = pos[e.target]; if (!a || !b) continue;
-        const s = st[e.target] || 'na';
-        const x1 = X(a.x) + 30, y1 = Y(a.y), x2 = X(b.x) - 26, y2 = Y(b.y), mx = (x1 + x2) / 2;
-        const p = document.createElementNS(NS, 'path');
-        p.setAttribute('d', `M${x1} ${y1} C${mx} ${y1} ${mx} ${y2} ${x2} ${y2}`);
-        p.setAttribute('class', 'edge ' + (s === 'na' ? 'iso' : s));
-        svg.append(p);
+      // mapa em caixas (mesmo desenho da tela Topologia); só redesenha quando os dados mudam,
+      // para não reiniciar a animação dos pacotes a cada atualização
+      const T = D.tmap;
+      if (!T || !T.groups || !T.groups.length) {
+        if (this.sig !== 'empty') { this.sig = 'empty'; clear(this.box).append(h('div', {class: 'tvg-empty', text: 'Nenhum destino cadastrado.'})); }
+        return;
       }
-      for (const n of topo.nodes) {
-        const p = pos[n.id]; if (!p) continue;
-        const s = n.type === 'internet' ? 'net' : (st[n.id] || 'na');
-        const col = {net: C('--blue'), ok: C('--green'), warn: C('--yellow'), bad: C('--red'), iso: C('--grey'), na: C('--grey')}[s];
-        const g = document.createElementNS(NS, 'g');
-        const r = n.type === 'internet' ? 30 : 22;
-        g.innerHTML = `<circle cx="${X(p.x)}" cy="${Y(p.y)}" r="${r + 10}" fill="${col}" opacity=".16"/>` +
-          `<circle cx="${X(p.x)}" cy="${Y(p.y)}" r="${r}" fill="${col}" style="filter:drop-shadow(0 0 10px ${col})"/>`;
-        const root_ = n.type === 'internet';
-        const t = document.createElementNS(NS, 'text');
-        t.setAttribute('x', root_ ? X(p.x) : X(p.x) + r + 16); t.setAttribute('y', root_ ? Y(p.y) + r + 34 : Y(p.y) - 3);
-        t.setAttribute('font-size', root_ ? '24' : '22'); t.setAttribute('font-weight', '600');
-        if (root_) t.setAttribute('text-anchor', 'middle');
-        t.textContent = n.label;
-        const sub = document.createElementNS(NS, 'text');
-        sub.setAttribute('x', root_ ? X(p.x) : X(p.x) + r + 16); sub.setAttribute('y', root_ ? Y(p.y) + r + 58 : Y(p.y) + 21);
-        sub.setAttribute('font-size', '16'); sub.setAttribute('class', 'sub');
-        if (root_) sub.setAttribute('text-anchor', 'middle');
-        const x = T[n.id] || {};
-        sub.textContent = n.type === 'internet' ? ((S.overview || {}).public_ip || '') :
-          s === 'bad' ? 'OFFLINE · ' + n.host : s === 'iso' ? 'ISOLADO' : (x.latency != null ? ms(x.latency) + ' ms · ' : '') + (n.host || '');
-        if (s === 'bad') sub.style.fill = C('--red');
-        g.append(t, sub);
-        svg.append(g);
-      }
-      B.append(svg);
+      const sig = window.NNMap.sig(T);
+      if (sig === this.sig && Date.now() - (this.drawn || 0) < 60000) return;
+      this.sig = sig; this.drawn = Date.now();
+      if (this.map) this.map.destroy();
+      this.map = window.NNMap.render(this.box, T, {tv: true});
     },
+    stop() { if (this.map) { this.map.destroy(); this.map = null; } this.sig = null; },
   };
 
   // ================================================================== CENA 3 — Equipamentos

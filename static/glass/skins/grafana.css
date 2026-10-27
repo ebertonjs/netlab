@@ -204,3 +204,9 @@
   [data-skin="grafana"] .shell { padding: 12px 12px calc(var(--dock-h) + 10px); }
   [data-skin="grafana"] .sheet-wrap { left: 0; padding-bottom: 66px; }
 }
+
+/* mapa da rede */
+[data-skin="grafana"] .tm-box { border-radius: 4px; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
+[data-skin="grafana"] .tm-ico { border-radius: 3px; }
+[data-skin="grafana"] .tm-kpi { border-radius: 4px; }
+[data-skin="grafana"] .tm-glow { opacity: .12; }

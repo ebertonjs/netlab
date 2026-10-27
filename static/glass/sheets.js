@@ -235,15 +235,20 @@
       // edição: pai e intervalo
       const parentSel = select([['', '🌐 Raiz (sem pai)'], ...S.targets.filter(x => x.name !== name).map(x => [x.name, x.name])], full.parent || '');
       const ivIn = inp({type: 'number', min: 2, max: 3600, placeholder: 'padrão', value: full.interval || ''});
+      const grpList = 'grp' + Math.random().toString(36).slice(2, 7);
+      const grpIn = inp({value: full.group || '', maxlength: 30, placeholder: 'automático', list: grpList});
+      const grpDl = h('datalist', {id: grpList}, ...[...new Set(S.targets.map(x => x.group).filter(Boolean).concat(['Servidores', 'Rede local', 'Wi-Fi', 'Câmeras', 'Internet']))].map(g => h('option', {value: g})));
       L.append(h('div', {class: 'form'},
         field('Depende de (pai na topologia)', parentSel),
+        field('Grupo no mapa', grpIn), grpDl,
         field('Intervalo próprio (s)', ivIn),
         h('div', {class: 'hint', text: 'Com um pai definido, se o pai cair este destino não gera alerta próprio (causa raiz).'}),
         h('div', {style: {display: 'flex', gap: '8px', flexWrap: 'wrap'}},
           tbtn('Salvar', 'check', async () => {
             if (needAdmin()) return;
             const ok = await act(() => post('/api/settings/targets/' + encodeURIComponent(name) + '/update',
-              {parent: parentSel.value || null, set_parent: true, interval: ivIn.value ? +ivIn.value : null, set_interval: true}), 'Destino atualizado');
+              {parent: parentSel.value || null, set_parent: true, interval: ivIn.value ? +ivIn.value : null, set_interval: true,
+                group: grpIn.value.trim() || null, set_group: true}), 'Destino atualizado');
             if (ok) NN.loadTargets();
           }, 'primary'),
           tbtn('Remover', 'trash', async () => {
@@ -562,6 +567,9 @@
   registerSheet('topology', {
     title: 'Topologia', icon: 'network',
     async render(ctx) {
+      const view = ctx.params.view === 'arvore' ? 'arvore' : 'mapa';
+      ctx.tools.append(seg([['mapa', 'Mapa'], ['arvore', 'Árvore']], view, v => ctx.reopen({view: v})));
+      if (view === 'mapa') return renderMap(ctx);
       const [L, R] = panels(ctx);
       const topo = await api('/api/topology');
       if (!ctx.alive) return;
@@ -628,6 +636,54 @@
       R.append(svg);
     },
   });
+
+  // mapa da rede em caixas (v3.5)
+  async function renderMap(ctx) {
+    const [L, R] = panels(ctx);
+    const host = h('div', {class: 'tm-host'});
+    const kp = h('div', {class: 'tm-kpis'});
+    R.classList.add('topo-map');
+    R.append(kp, host);
+    let m = null, drawnSig = '', drawnAt = 0;
+    const kpi = (orb, icon, l, v, sub) => h('div', {class: 'tm-kpi'}, h('span', {class: 'orb ' + orb, trusted: ICO(icon)}),
+      h('span', {style: {minWidth: 0}}, h('span', {class: 'l', text: l}), h('span', {class: 'v', text: String(v)}), h('span', {class: 's', text: sub})));
+    async function load() {
+      const D = await api('/api/topomap');
+      if (!ctx.alive) return;
+      const s = D.summary;
+      clear(kp).append(
+        kpi('green', 'check', 'Destinos online', `${s.ok + s.warn}/${s.total}`, s.total ? 'respondendo agora' : 'nenhum destino'),
+        kpi(s.bad ? 'red' : 'green', s.bad ? 'x' : 'check', 'Fora do ar', s.bad, s.bad ? 'causa raiz' : 'nenhum problema'),
+        kpi(s.warn ? '' : 'green', 'alert', 'Avisos', s.warn, 'lento ou com perda'),
+        kpi(s.iso ? 'grey' : 'blue', 'network', 'Isolados', s.iso, 'atrás de um equipamento caído'));
+      const sg = NNMap.sig(D);
+      if (!m || sg !== drawnSig || Date.now() - drawnAt > 60000) {
+        if (m) m.destroy();
+        m = NNMap.render(host, D, {onItem: n => openSheet('target', {name: n}), onCam: ch => openSheet('cameras', {ch})});
+        drawnSig = sg; drawnAt = Date.now();
+      }
+      // painel lateral
+      clear(L);
+      L.append(h('div', {class: 'bigstat'}, h('span', {class: 'l', text: 'Status da rede'}), h('span', {class: 'v', text: String(s.total)}, h('small', {text: 'destinos'}))));
+      L.append(h('div', {class: 'tm-ringbox'}, NNMap.ring(s, 168)));
+      const lg = h('div', {class: 'tm-legend'});
+      for (const [k, c, t] of [['ok', 'var(--green)', 'Online'], ['warn', 'var(--yellow)', 'Avisos'], ['bad', 'var(--red)', 'Fora do ar'], ['iso', 'var(--muted)', 'Isolados'], ['na', 'var(--grey)', 'Sem dados']]) {
+        if (k === 'na' && !s.na) continue;
+        lg.append(h('div', {}, h('i', {style: {background: c}}), h('b', {text: String(s[k] || 0)}), h('span', {text: t})));
+      }
+      L.append(lg, h('div', {class: 'rule'}));
+      L.append(h('h4', {class: 'side-h', text: 'Problemas agora'}));
+      const act_ = NN.S.active || [];
+      if (!act_.length) L.append(h('div', {class: 'hint', style: {color: 'var(--green)'}, text: 'Nenhum problema ✓'}));
+      const pl = h('div', {class: 'list'});
+      for (const i of act_.slice(0, 6)) pl.append(li(sevClass(i.severity), i.target, i.message, hm(i.started_ts), () => openSheet('incidents')));
+      L.append(pl, h('div', {class: 'rule'}));
+      L.append(h('div', {class: 'hint', text: 'Agrupe os destinos abrindo um card → "Grupo no mapa" (ex.: Servidores, Wi-Fi, Câmeras). Sem grupo: os de internet vão para "Internet", os locais para "Rede local", e quem tem dependentes ganha caixa própria. As ligações seguem o "Depende de".'}));
+    }
+    await load();
+    ctx.every(10000, load);
+    ctx.cleanups.push(() => { if (m) m.destroy(); });
+  }
 
   // ================================================================== FERRAMENTAS
   registerSheet('tools', {
@@ -1032,11 +1088,11 @@
 
       if (tab === 'destinos') {
         const cfg = await api('/api/settings');
-        const tbl = h('table', {class: 'tbl'}, h('thead', {}, h('tr', {}, ...['Destino', 'Host', 'Tipo', 'Depende de', 'Intervalo', ''].map(x => h('th', {text: x})))));
+        const tbl = h('table', {class: 'tbl'}, h('thead', {}, h('tr', {}, ...['Destino', 'Host', 'Tipo', 'Depende de', 'Grupo', 'Intervalo', ''].map(x => h('th', {text: x})))));
         const tb = h('tbody');
         for (const t of cfg.targets) {
           tb.append(h('tr', {}, h('td', {text: t.name}), h('td', {class: 'mono', text: t.host}), h('td', {text: (t.type || 'icmp').toUpperCase() + (t.port ? ':' + t.port : '')}),
-            h('td', {text: t.parent || '—'}), h('td', {text: t.interval ? t.interval + ' s' : 'padrão'}),
+            h('td', {text: t.parent || '—'}), h('td', {text: t.group || 'auto'}), h('td', {text: t.interval ? t.interval + ' s' : 'padrão'}),
             h('td', {class: 'num'}, tbtn('', 'eye', () => openSheet('target', {name: t.name})), ' ',
               tbtn('', 'trash', async () => {
                 if (needAdmin() || !confirm(`Remover "${t.name}"?`)) return;
@@ -1051,6 +1107,8 @@
         const port = inp({type: 'number', placeholder: '443'}), status = inp({type: 'number', placeholder: '200 (opcional)'});
         const parent = select([['', '🌐 Raiz'], ...cfg.targets.map(t => [t.name, t.name])], '');
         const ivl = inp({type: 'number', placeholder: 'padrão'});
+        const grp = inp({placeholder: 'automático', maxlength: 30, list: 'grpAdd'});
+        const grpDl = h('datalist', {id: 'grpAdd'}, ...[...new Set(cfg.targets.map(x => x.group).filter(Boolean).concat(['Servidores', 'Rede local', 'Wi-Fi', 'Câmeras', 'Internet']))].map(g => h('option', {value: g})));
         const portF = field('Porta', port), stF = field('Status HTTP esperado', status);
         const sync = () => { portF.hidden = type.value !== 'tcp'; stF.hidden = type.value !== 'http'; };
         type.addEventListener('change', sync); sync();
@@ -1058,6 +1116,7 @@
           h('div', {class: 'row2'}, field('Nome', nm), field('Host / URL', host)),
           h('div', {class: 'row2'}, field('Tipo', type), field('Depende de', parent)),
           h('div', {class: 'row2'}, portF, stF, field('Intervalo próprio (s)', ivl)),
+          h('div', {class: 'row2'}, field('Grupo no mapa', grp), grpDl),
           h('div', {class: 'hint', text: 'Dica: Instagram/Facebook limitam ICMP e geram "perda" falsa. Use HTTP (https://www.instagram.com) ou TCP 443.'}),
           h('div', {}, tbtn('Adicionar', 'plus', async () => {
             if (needAdmin()) return;
@@ -1065,6 +1124,7 @@
             if (type.value === 'tcp') body.port = +port.value;
             if (type.value === 'http' && status.value) body.expect_status = +status.value;
             if (ivl.value) body.interval = +ivl.value;
+            if (grp.value.trim()) body.group = grp.value.trim();
             if (await act(() => post('/api/settings/targets', body), 'Destino adicionado')) { NN.loadTargets(); ctx.reopen(); }
           }, 'primary')))));
         // DNS

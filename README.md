@@ -5,7 +5,7 @@ Painel de monitoramento de rede **self-hosted** (na interface ele se chama **Net
 ![Python](https://img.shields.io/badge/Python-3.9%2B-blue)
 ![FastAPI](https://img.shields.io/badge/FastAPI-backend-009688)
 ![SQLite](https://img.shields.io/badge/SQLite-embutido-003b57)
-![Versão](https://img.shields.io/badge/vers%C3%A3o-3.3-f59e2e)
+![Versão](https://img.shields.io/badge/vers%C3%A3o-3.5-f59e2e)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 ![NetLAB — tema Glass escuro](docs/img/glass-escuro.jpg)
@@ -19,14 +19,46 @@ Painel de monitoramento de rede **self-hosted** (na interface ele se chama **Net
 - **Incidentes automáticos** que abrem e fecham sozinhos (offline, perda, latência, jitter, DNS lento, CPU/temperatura, câmera sem vídeo, HD do DVR). Queda local vira **um único alerta** em vez de dezenas
 - **Notificações** por Telegram, Discord, webhook assinado (HMAC), e-mail e navegador, com janelas de manutenção — no Telegram, a perda de vídeo chega com a **última foto da câmera**
 - **4 temas que mudam a interface inteira**, escolhidos por aparelho, com tamanho ajustável (Normal / Compacta / Mínima)
-- **Modo TV** com rodízio de cenas: visão geral, topologia animada, equipamentos, últimas 24 h e câmeras
+- **Página inicial completa**: indicadores (disponibilidade hoje/7 d/30 d, IP público, último speedtest, tempo sem quedas), disponibilidade de cada destino em blocos de 30 min, portas do MikroTik, aparelhos novos na rede, fotos das câmeras, AdGuard, DNS e saúde do servidor
+- **Mapa da rede em caixas**, estilo NOC: grupos de equipamentos ligados por linhas com pacotes animados, causa raiz em vermelho e dependentes como "isolados"
+- **Modo TV** com rodízio de cenas: visão geral, mapa da rede, equipamentos, últimas 24 h e câmeras
+- **Speedtest automático** diário no horário que você escolher
 - **Câmeras do DVR Intelbras** (MHDX, API compatível Dahua) **ao vivo só enquanto alguém assiste** — roda até no Raspberry Pi 3
 - **Integrações**: MikroTik (REST), AdGuard Home, SNMP, Zabbix, agentes remotos
-- **Topologia** da rede com dependências (se o gateway cai, os filhos aparecem como isolados, não como offline)
 - **Comparação de DNS**, speedtest, ferramentas (traceroute, portas, certificados, varredura de rede)
 - **SLA**, MTTR/MTBF, heatmap dia × hora, relatório imprimível, página de status pública opcional e métricas **Prometheus**
 - **Login com sessão**, perfis admin/visualizador, proteção CSRF e CSP, credenciais cifradas no banco
 - **Tudo configurável pela interface**, sem editar arquivo
+
+---
+
+## 🏠 Página inicial
+
+Além dos cards de cada destino, a página inicial mostra tudo o que importa sem precisar clicar. Os blocos de integrações que você não usa (MikroTik, AdGuard, DVR) simplesmente não aparecem.
+
+![Página inicial — blocos de resumo](docs/img/pagina-inicial.jpg)
+
+1. **Indicadores** — disponibilidade hoje / 7 d / 30 d, IP público (e há quanto tempo não muda), último speedtest, tempo sem quedas e incidentes do mês.
+2. **Disponibilidade por destino** — 24 h em blocos de 30 min: ok, lento, fora do ar ou isolado.
+3. **MikroTik** — cada porta com status e tráfego (o nome vem do comentário da interface) e os **aparelhos na rede**, com os novos do dia em destaque.
+4. **Câmeras** — uma foto por minuto, só com a página aberta; clique para ver ao vivo.
+5. **AdGuard**, **DNS** e **servidor** (CPU, memória, temperatura, disco), mais o **mapa de incidentes** 7 dias × 24 h na coluna da esquerda.
+
+---
+
+## 🗺️ Mapa da rede
+
+**Topologia → Mapa**: os destinos viram caixas agrupadas, ligadas pelo "Depende de", com pacotes correndo nas linhas e a latência de cada ligação. Quando algo cai, a caixa e a ligação ficam vermelhas e quem depende dela aparece como **isolado** — a causa raiz salta aos olhos.
+
+![Mapa da rede](docs/img/mapa.jpg)
+
+| Com um equipamento fora do ar | No Modo TV |
+|---|---|
+| ![Mapa com queda](docs/img/mapa-queda.jpg) | ![Mapa no Modo TV](docs/img/tv-topologia.jpg) |
+
+- **Grupos**: defina "Grupo no mapa" em cada destino (Servidores, Wi-Fi, Câmeras…). Sem grupo, o NetLAB agrupa sozinho: destinos de internet em "Internet", locais em "Rede local" e quem tem dependentes ganha caixa própria.
+- Caixas extras: **Ambiente** (CPU e temperatura do servidor e do MikroTik) e **Câmeras** (canais do DVR).
+- A vista antiga em árvore continua no botão **Árvore**.
 
 ---
 
@@ -53,22 +85,18 @@ Cada aparelho escolhe o seu em **Configurações → Aparência**. O admin defin
 
 Tela cheia, pensada para ficar ligada o dia todo: relógio grande, rodízio automático de cenas e alerta em tela cheia quando algo crítico acontece (com som opcional).
 
-| Visão geral | Topologia |
+| Visão geral | Últimas 24 horas |
 |---|---|
-| ![Modo TV — visão geral](docs/img/tv-visao-geral.jpg) | ![Modo TV — topologia](docs/img/tv-topologia.jpg) |
-
-![Modo TV — últimas 24 horas](docs/img/tv-24h.jpg)
+| ![Modo TV — visão geral](docs/img/tv-visao-geral.jpg) | ![Modo TV — últimas 24 horas](docs/img/tv-24h.jpg) |
 
 Atalhos: `←` `→` trocam de cena, `espaço` pausa, `A` dispensa o alerta, `S` liga/desliga o som, `F` tela cheia, `Esc` sai.
 Para abrir direto numa TV: `http://IP:8000/#tv` — ou só algumas cenas: `/#tv?cenas=1,2,5&tempo=20`.
 
 ---
 
-## 📈 Latência, topologia e celular
+## 📈 Latência e celular
 
-| Latência e disponibilidade | Topologia |
-|---|---|
-| ![Latência](docs/img/latencia.jpg) | ![Topologia](docs/img/topologia.jpg) |
+![Latência e disponibilidade](docs/img/latencia.jpg)
 
 <p align="center"><img src="docs/img/celular.jpg" width="300" alt="NetNOC no celular"></p>
 
@@ -166,7 +194,8 @@ journalctl -u netnoc -f        # logs
 
 Tudo pela aba **Configurações**:
 
-- **Destinos** — hosts a monitorar, com dependência (pai) para a topologia
+- **Destinos** — hosts a monitorar, com dependência (pai) e grupo para o mapa
+- **Geral** — intervalos de coleta, speedtest automático e nome do painel
 - **Alertas** — limites de latência, jitter, perda e DNS, e Telegram (bot + chat_id, com botão de teste)
 - **Integrações** — MikroTik, AdGuard Home e DVR (com **Salvar e testar**, que mostra o que o equipamento respondeu)
 - **Aparência** — tema, modo, cor, tamanho da interface e padrão do servidor
