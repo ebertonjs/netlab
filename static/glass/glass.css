@@ -1049,3 +1049,11 @@ input.swatch[type=color] { background: none; overflow: hidden; }
 .tvg-map { position: relative; min-height: 0; padding: .6em; }
 .tvg-map .tm-wrap { position: absolute; inset: .6em; width: auto; height: auto; }
 .side-h { font-size: 11px; letter-spacing: .08em; font-weight: 700; opacity: .7; margin: 4px 0 10px; text-transform: uppercase; }
+
+/* rodapé da coluna esquerda: links do autor + versão */
+.side-foot { display: flex; align-items: center; gap: 8px; margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--rule); }
+.side-foot a { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; color: inherit; opacity: .7; background: var(--btn); transition: opacity .15s, transform .15s; }
+.side-foot a:hover { opacity: 1; transform: translateY(-1px); }
+.side-foot svg { width: 15px; height: 15px; }
+.side-foot span { margin-left: auto; font-size: 11px; opacity: .55; }
+[data-skin="terminal"] .side-foot a, [data-skin="grafana"] .side-foot a { border-radius: 3px; }

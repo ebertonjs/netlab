@@ -232,6 +232,8 @@
     root.append(row2);
     if (!keepPanel && row2.querySelector('.hx-cams')) refreshCams(true);   // painel novo: carrega as fotos
     renderHeat();
+    const vl = $('verLine');
+    if (vl && D.system && D.system.version) vl.textContent = (window.APP_NAME || 'NetNOC') + ' · v' + D.system.version;
   }
   async function load() {
     try { D = await api('/api/home'); render(); } catch (_) { /* sessão expirada: app.js redireciona */ }
