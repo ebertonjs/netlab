@@ -82,7 +82,36 @@ if [ -z "${NETNOC_REINST_COPY:-}" ] && [[ "$(cd "$(dirname "$0")" && pwd)" == "$
 fi
 
 svc_exists() { [ -f "$UNIT" ]; }
-svc_stop() { if svc_exists; then sudo systemctl stop netnoc 2>/dev/null || true; fi; }
+# para o serviço e também um NetNOC rodado à mão no terminal (uvicorn com a pasta da instalação)
+svc_stop() {
+  if svc_exists; then
+    sudo systemctl stop netnoc 2>/dev/null || true
+    c_ok "Serviço netnoc parado"
+  fi
+  local pid cwd killed=0
+  for pid in $(pgrep -f "uvicorn main:app" 2>/dev/null || true); do
+    cwd="$(readlink "/proc/$pid/cwd" 2>/dev/null || sudo readlink "/proc/$pid/cwd" 2>/dev/null || true)"
+    if [ "$cwd" = "$APPDIR" ]; then kill "$pid" 2>/dev/null || sudo kill "$pid" 2>/dev/null || true; killed=1; fi
+  done
+  if [ "$killed" = 1 ]; then sleep 2; c_ok "NetNOC que estava rodando no terminal foi parado"; fi
+  return 0
+}
+svc_disable() {
+  if svc_exists; then sudo systemctl disable netnoc 2>/dev/null || true; fi
+  return 0
+}
+# confirma que o serviço está ativo e marcado para iniciar no boot (liga se não estiver)
+svc_check_boot() {
+  if ! svc_exists; then c_warn "Serviço netnoc não foi criado — rode: ./install.sh --service"; return 1; fi
+  if [ "$(systemctl is-enabled netnoc 2>/dev/null || true)" != "enabled" ]; then
+    sudo systemctl enable netnoc
+  fi
+  if [ "$(systemctl is-enabled netnoc 2>/dev/null || true)" = "enabled" ]; then
+    c_ok "Serviço netnoc ativo e configurado para iniciar sozinho quando o Pi reiniciar"
+  else
+    c_warn "Não consegui marcar o serviço para iniciar no boot. Rode: sudo systemctl enable netnoc"
+  fi
+}
 
 # ---------------------------------------------------------------- backup
 do_backup() {
@@ -189,11 +218,13 @@ case "$MODE" in
     ask "Instalar o NetNOC em $APPDIR usando o backup $RESTORE_FROM?" || exit 0
     install_fresh "$RESTORE_FROM"
     wait_up || die "O serviço não respondeu. Veja: journalctl -u netnoc -n 50 --no-pager"
+    svc_check_boot
     ;;
 
   reinstalar)
     ask "Fazer backup, remover e instalar de novo o NetNOC?" || exit 0
     do_backup
+    svc_disable
     OLD="$BACKUP/instalacao-antiga"
     mv "$APPDIR" "$OLD"
     c_info "Instalação antiga guardada em $OLD (volta sozinha se algo falhar)"
@@ -209,6 +240,7 @@ case "$MODE" in
     install_fresh "$BACKUP"
     wait_up || rollback
     trap - ERR
+    svc_check_boot
     if ask "Tudo certo. Apagar a instalação antiga de $OLD (os dados continuam no backup)?"; then
       rm -rf "$OLD"
       c_ok "Instalação antiga removida"
