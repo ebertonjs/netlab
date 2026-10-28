@@ -1009,7 +1009,7 @@
       if (sys) {
         L.append(h('div', {class: 'bigstat'}, h('span', {class: 'l', text: sys.host_label}), h('span', {class: 'v', text: 'v' + sys.version})));
         L.append(kv([['CPU', pct(sys.cpu_pct, 0) + '%'], ['Memória', pct(sys.mem_pct, 0) + '%'], ['Temperatura', sys.temp_c != null ? pct(sys.temp_c, 1) + ' °C' : '--'],
-          ['Disco', sys.disk_pct != null ? pct(sys.disk_pct, 0) + '%' : '--'], ['Banco', sys.db_mb != null ? ms(sys.db_mb) + ' MB' : '--'],
+          ['Disco', sys.disk_pct != null ? pct(sys.disk_pct, 0) + '%' : '--'], ['Configuração', sys.db_cfg_mb != null ? pct(sys.db_cfg_mb, 2) + ' MB' : '--'], ['Histórico', sys.db_hist_mb != null ? ms(sys.db_hist_mb) + ' MB' : '--'],
           ['Host ligado há', sys.host_uptime_s ? dur(sys.host_uptime_s) : '--'], ['NetNOC rodando há', dur(sys.app_uptime_s)],
           ['Janela de avaliação', dur(sys.window_seconds)]]));
         L.append(h('div', {class: 'rule'}), h('h4', {class: 'hint', style: {fontWeight: '700', textTransform: 'uppercase', letterSpacing: '.08em'}, text: 'Coletores'}));
@@ -1058,6 +1058,30 @@
                 if (needAdmin()) return;
                 await act(() => post('/api/settings/speedtest', {enabled: saEn.checked, time: saAt.value}), 'Speedtest automático salvo');
               }, 'primary')))));
+        }
+        // banco: configuração x histórico
+        if (sys) {
+          const files = sys.db_files || {config: 'netnoc.db', history: 'netnoc-historico.db'};
+          R.append(sec('db', 'Dados',
+            h('div', {class: 'tiles', style: {gridTemplateColumns: 'repeat(auto-fill,minmax(260px,1fr))', marginBottom: '12px'}},
+              h('div', {class: 'tile', style: {minHeight: '0'}}, h('h4', {text: 'Configuração'}),
+                h('div', {class: 'big', text: (sys.db_cfg_mb != null ? pct(sys.db_cfg_mb, 2) : '--') + ' MB'}),
+                h('div', {class: 'tsub', text: files.config + ' — destinos, grupos, integrações, usuários e aparelhos do DHCP. Fica sempre; é o que vai no backup.'})),
+              h('div', {class: 'tile', style: {minHeight: '0'}}, h('h4', {text: 'Histórico'}),
+                h('div', {class: 'big', text: (sys.db_hist_mb != null ? ms(sys.db_hist_mb) : '--') + ' MB'}),
+                h('div', {class: 'tsub', text: files.history + ' — pings, médias, DNS, speedtests, incidentes, eventos e logs. Pode ser apagado quando quiser.'}))),
+            h('div', {class: 'hint', style: {marginBottom: '10px'}, text: 'Apagar o histórico zera gráficos, SLA e incidentes, mas não mexe em nenhuma configuração. O monitoramento continua e o histórico recomeça na hora.'}),
+            h('div', {style: {display: 'flex', gap: '8px', flexWrap: 'wrap'}},
+              tbtn('Apagar histórico', 'trash', async () => {
+                if (needAdmin() || !confirm('Apagar TODO o histórico (pings, gráficos, SLA, incidentes e eventos)? A configuração não é afetada.')) return;
+                const r = await act(() => post('/api/history/clear'), 'Histórico apagado');
+                if (r) { NN.loadSlow(); ctx.reopen(); }
+              }, 'danger'),
+              tbtn('Compactar arquivos', 'refresh', async () => {
+                if (needAdmin()) return;
+                const r = await act(() => post('/api/history/vacuum'));
+                if (r) { toast(`Compactado: ${r.size_before_mb} MB → ${r.size_after_mb} MB`); ctx.reopen(); }
+              }))));
         }
         const an = await api('/api/settings/appname');
         const nameIn = inp({value: an.name, maxlength: 40});

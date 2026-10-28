@@ -130,7 +130,8 @@ Alternativas sem abrir portas: Tailscale ou WireGuard.
 
 ## 10. Backup (importante)
 
-Guarde sempre **os dois** arquivos: `netnoc.db` (dados) e `netnoc.key` (chave dos segredos). Sem a chave, tokens e senhas salvos não abrem.
+Guarde sempre **os dois** arquivos: `netnoc.db` (configuração) e `netnoc.key` (chave dos segredos). Sem a chave, tokens e senhas salvos não abrem.
+O histórico fica à parte em `netnoc-historico.db` — copie também se quiser manter gráficos e SLA, ou ignore: ele pode ser apagado a qualquer momento (Configurações → Geral → Dados → Apagar histórico).
 ```bash
 sudo systemctl stop netnoc
 cp netnoc.db netnoc.key ~/backup-netnoc/
@@ -168,7 +169,25 @@ No navegador, `Ctrl+F5` uma vez. O banco migra sozinho.
 
 ## 13. Desinstalar
 
+**Mantendo os dados** (para reinstalar depois sem perder configuração):
+```bash
+sudo systemctl disable --now netnoc
+mkdir -p ~/netnoc-backup
+cp netnoc.db* netnoc.key ~/netnoc-backup/                 # configuração + chave das senhas
+cp netnoc-historico.db* ~/netnoc-backup/ 2>/dev/null     # opcional: gráficos, SLA e incidentes
+sudo rm /etc/systemd/system/netnoc.service && sudo systemctl daemon-reload
+cd .. && rm -rf netlab
+```
+
+**Reinstalar com os dados guardados:**
+```bash
+git clone https://github.com/ebertonjs/netlab.git && cd netlab
+cp ~/netnoc-backup/* .
+./install.sh --service
+```
+
+**Apagar tudo** (inclusive dados e chave):
 ```bash
 sudo systemctl disable --now netnoc && sudo rm /etc/systemd/system/netnoc.service
-cd .. && rm -rf netlab        # apaga também dados e chave: faça backup antes
+cd .. && rm -rf netlab
 ```

@@ -173,7 +173,7 @@
         bar(u === '%' ? v : v / 85 * 100, level(v, w, b)));
     }
     el.append(h('div', {class: 'hint hx-foot', text: [s.host_uptime_s ? 'ligado há ' + dur(s.host_uptime_s) : null,
-      s.db_mb != null ? 'banco ' + pct(s.db_mb, 1) + ' MB' : null].filter(Boolean).join(' · ')}));
+      s.db_hist_mb != null ? 'histórico ' + pct(s.db_hist_mb, 1) + ' MB' : s.db_mb != null ? 'banco ' + pct(s.db_mb, 1) + ' MB' : null].filter(Boolean).join(' · ')}));
   }
 
   // ------------------------------------------------------------------ 8. mapa de incidentes (coluna esquerda)

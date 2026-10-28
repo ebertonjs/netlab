@@ -5,7 +5,7 @@ Painel de monitoramento de rede **self-hosted** (na interface ele se chama **Net
 ![Python](https://img.shields.io/badge/Python-3.9%2B-blue)
 ![FastAPI](https://img.shields.io/badge/FastAPI-backend-009688)
 ![SQLite](https://img.shields.io/badge/SQLite-embutido-003b57)
-![Versão](https://img.shields.io/badge/vers%C3%A3o-3.5-f59e2e)
+![Versão](https://img.shields.io/badge/vers%C3%A3o-3.6-f59e2e)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 ![NetLAB — tema Glass escuro](docs/img/glass-escuro.jpg)
@@ -225,13 +225,23 @@ O `config.json` só é usado na primeira execução para popular o banco; depois
 | Variável | Para que serve |
 |---|---|
 | `NETNOC_ADMIN_PASSWORD` | Senha inicial do `admin` |
-| `NETNOC_DB` | Caminho do banco SQLite (padrão `netnoc.db`) |
+| `NETNOC_DB` | Caminho do banco de configuração (padrão `netnoc.db`) |
+| `NETNOC_HIST_DB` | Caminho do banco de histórico (padrão `netnoc-historico.db`, na mesma pasta) |
 | `NETNOC_KEY_FILE` | Arquivo da chave de cifragem (padrão `netnoc.key`) |
 | `NETNOC_SECRET_KEY` | Chave de cifragem direto na variável (alternativa ao arquivo) |
 | `NETNOC_GO2RTC` | Caminho do go2rtc, se não estiver em `bin/go2rtc` |
 | `NETNOC_AUTH=off` | Desliga o login (não recomendado) |
 
 > ⚠️ Faça backup do `netnoc.db` **e** do `netnoc.key`. Sem a chave, as senhas e tokens salvos não podem ser lidos.
+
+### Configuração × histórico
+
+| Arquivo | O que guarda | Pode apagar? |
+|---|---|---|
+| `netnoc.db` | destinos, grupos, integrações, usuários, aparelhos do DHCP | **Não** — é a sua configuração (alguns KB) |
+| `netnoc-historico.db` | pings, médias, DNS, speedtests, incidentes, eventos, logs | **Sim**, quando quiser |
+
+Para zerar o histórico: **Configurações → Geral → Dados → Apagar histórico**, ou com o serviço parado `rm netnoc-historico.db*` (ele é recriado vazio na próxima subida).
 
 ### Agente para sites remotos
 

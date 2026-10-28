@@ -1,5 +1,11 @@
 # Histórico de versões
 
+## v3.6 — configuração e histórico em arquivos separados
+- `netnoc.db` agora guarda **só a configuração** (destinos, grupos, integrações, usuários, aparelhos do DHCP) e fica com poucos KB.
+- Pings, médias, DNS, speedtests, incidentes, eventos e logs vão para **`netnoc-historico.db`**, que pode ser apagado a qualquer momento (botão em Configurações → Geral → Dados, ou apagando o arquivo com o serviço parado). A configuração não é afetada.
+- Na primeira execução, bancos antigos são separados automaticamente (o histórico é movido, nada se perde).
+- Configurações → Geral mostra o tamanho de cada arquivo, com botões para apagar o histórico e compactar.
+
 ## v3.5 — mapa da rede em caixas
 - **Topologia → Mapa**: destinos agrupados em caixas (Internet, Rede local, equipamentos com dependentes ou o grupo que você definir), ligadas pelo "Depende de", com pacotes animados nas ligações, latência e estado de cada item. Caixas extras: **Ambiente** (CPU/temperatura do servidor e do MikroTik) e **Câmeras**. A vista antiga continua em **Árvore**.
 - Indicadores (online, fora, avisos, isolados), anel de status e problemas atuais no painel lateral.

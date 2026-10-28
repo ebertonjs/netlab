@@ -21,7 +21,7 @@ import stats
 import zabbix
 
 CFG = monitor.CFG
-APP_VERSION = "3.5"
+APP_VERSION = "3.6"
 STARTED_AT = time.time()
 
 RANGE_SECONDS = {"5m": 300, "1h": 3600, "24h": 86400, "7d": 7 * 86400, "30d": 30 * 86400}
@@ -644,12 +644,13 @@ def clear_history(request: Request):
     stats.cache_clear()
     monitor.log_event("Histórico limpo pelo usuário", "Info")
     audit(request, "history-clear")
-    return {"ok": True}
+    monitor.system_once()                   # atualiza os tamanhos mostrados na tela
+    return {"ok": True, "history_mb": round(db.sizes()["history"] / 1e6, 2)}
 
 
 @app.post("/api/history/vacuum")
 def vacuum_history(request: Request):
-    size = lambda: os.path.getsize(db.DB_PATH) if os.path.exists(db.DB_PATH) else 0
+    size = lambda: sum(db.sizes().values())
     before = size()
     db.vacuum_full()
     after = size()
@@ -1633,12 +1634,14 @@ def workers_ep():
 @app.get("/api/system")
 def system_ep():
     m = {r["key"]: r["value"] for r in db.query(
-        "SELECT key,value FROM meta WHERE key IN ('cpu_pct','mem_pct','temp_c','disk_pct','db_mb','host_uptime_s')")}
+        "SELECT key,value FROM meta WHERE key IN ('cpu_pct','mem_pct','temp_c','disk_pct','db_mb','db_cfg_mb','db_hist_mb','host_uptime_s')")}
     num = lambda v: float(v) if v not in (None, "") else None
     w = monitor.worker_health()
     return {"host_label": monitor.HOST_LABEL, "version": APP_VERSION, "app_uptime_s": int(time.time() - STARTED_AT),
             "cpu_pct": num(m.get("cpu_pct")), "mem_pct": num(m.get("mem_pct")), "temp_c": num(m.get("temp_c")),
             "disk_pct": num(m.get("disk_pct")), "db_mb": num(m.get("db_mb")),
+            "db_cfg_mb": num(m.get("db_cfg_mb")), "db_hist_mb": num(m.get("db_hist_mb")),
+            "db_files": {"config": os.path.basename(db.DB_PATH), "history": os.path.basename(db.HIST_PATH)},
             "host_uptime_s": num(m.get("host_uptime_s")),
             "workers": w, "workers_bad": [x["name"] for x in w if x["status"] != "ok"],
             "window_seconds": monitor.WINDOW_S}

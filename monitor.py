@@ -1141,8 +1141,10 @@ def system_once():
     except Exception:
         pass
     try:
-        meta["db_mb"] = round(sum(os.path.getsize(db.DB_PATH + s) for s in ("", "-wal")
-                                  if os.path.exists(db.DB_PATH + s)) / 1e6, 1)
+        sz = db.sizes()
+        meta["db_cfg_mb"] = round(sz["config"] / 1e6, 2)
+        meta["db_hist_mb"] = round(sz["history"] / 1e6, 1)
+        meta["db_mb"] = round((sz["config"] + sz["history"]) / 1e6, 1)
     except Exception:
         pass
     meta["host_uptime_s"] = int(time.time() - psutil.boot_time())
