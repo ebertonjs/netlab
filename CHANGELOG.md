@@ -5,6 +5,7 @@
 - Pings, médias, DNS, speedtests, incidentes, eventos e logs vão para **`netnoc-historico.db`**, que pode ser apagado a qualquer momento (botão em Configurações → Geral → Dados, ou apagando o arquivo com o serviço parado). A configuração não é afetada.
 - Na primeira execução, bancos antigos são separados automaticamente (o histórico é movido, nada se perde).
 - Configurações → Geral mostra o tamanho de cada arquivo, com botões para apagar o histórico e compactar.
+- **`reinstalar.sh`**: backup automático (configuração, chave, histórico, serviço), reinstalação limpa com a última versão e restauração dos dados; também `--desinstalar`, `--backup` e `--restaurar`. Volta a versão anterior se algo falhar.
 
 ## v3.5 — mapa da rede em caixas
 - **Topologia → Mapa**: destinos agrupados em caixas (Internet, Rede local, equipamentos com dependentes ou o grupo que você definir), ligadas pelo "Depende de", com pacotes animados nas ligações, latência e estado de cada item. Caixas extras: **Ambiente** (CPU/temperatura do servidor e do MikroTik) e **Câmeras**. A vista antiga continua em **Árvore**.

@@ -167,7 +167,20 @@ No navegador, `Ctrl+F5` uma vez. O banco migra sozinho.
 | Teste do DVR com `HTTP 404` | Habilite o CGI no DVR; o vídeo ao vivo usa só o RTSP |
 | Sessão caiu / volta ao login | Sessão de 12 h (30 dias com "manter conectado"); trocar a senha encerra as sessões |
 
-## 13. Desinstalar
+## 13. Reinstalar ou desinstalar (com backup automático)
+
+O `reinstalar.sh` faz tudo sozinho: guarda os arquivos importantes (`netnoc.db`, `netnoc.key`, `netnoc-historico.db`, `config.json` e o serviço), remove, baixa a versão atual do GitHub, devolve os dados e sobe o serviço de novo — mantendo a porta e as variáveis (`Environment=`) que você tinha. Se algo falhar no meio, a instalação anterior volta para o lugar.
+
+```bash
+./reinstalar.sh                    # backup + reinstala com a última versão + restaura os dados
+./reinstalar.sh --sem-historico    # idem, recomeçando o histórico do zero
+./reinstalar.sh --desinstalar      # backup + remove (não instala de novo)
+./reinstalar.sh --backup           # só faz o backup
+./reinstalar.sh --restaurar ~/netnoc-backup/AAAAMMDD-HHMMSS   # instala usando um backup
+```
+Os backups ficam em `~/netnoc-backup/<data-hora>/`. Rode **sem sudo** (ele pede a senha quando precisa).
+
+### Fazendo à mão
 
 **Mantendo os dados** (para reinstalar depois sem perder configuração):
 ```bash

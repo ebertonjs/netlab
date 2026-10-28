@@ -266,6 +266,8 @@ sudo systemctl restart netnoc
 
 O banco migra sozinho na primeira subida (faça backup antes). No navegador, `Ctrl+F5` uma vez.
 
+Para uma instalação limpa sem perder nada: `./reinstalar.sh` faz backup da configuração, chave e histórico, remove, instala a versão atual e restaura os dados (detalhes no [INSTALL.md](INSTALL.md#13-reinstalar-ou-desinstalar-com-backup-automático)).
+
 ---
 
 ## 🗂️ Estrutura
@@ -279,7 +281,7 @@ netlab/
 ├── db.py          # SQLite (WAL, um único escritor) e rollups 5 min / 1 h
 ├── stats.py · sla.py · checks.py · snmp.py · sites.py · zabbix.py · notifier.py · backup.py
 ├── agent.py       # agente para sites remotos
-├── install.sh · manage.py · config.json · requirements.txt
+├── install.sh · reinstalar.sh · manage.py · config.json · requirements.txt
 ├── static/
 │   ├── app.html             # interface v3
 │   ├── glass/               # temas, modo TV, player de câmeras, fontes locais
