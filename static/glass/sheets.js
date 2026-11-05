@@ -372,7 +372,7 @@
 
   // ================================================================== DNS
   registerSheet('dns', {
-    title: 'Servidores DNS', icon: 'globe',
+    title: 'Servidores DNS', icon: 'dns',
     async render(ctx) {
       const range = ['1h', '24h', '7d'].includes(ctx.params.range) ? ctx.params.range : '24h';
       ctx.tools.append(seg([['1h', '1 h'], ['24h', 'Dia'], ['7d', 'Semana']], range, r => ctx.reopen({range: r})));
@@ -830,7 +830,7 @@
   }
 
   registerSheet('cameras', {
-    title: p => p.ch ? 'Câmera ' + p.ch : 'Câmeras', icon: 'video', single: true,
+    title: p => p.ch ? 'Câmera ' + p.ch : 'Câmeras', icon: 'camera', single: true,
     async render(ctx) {
       const st = await api('/api/cam/status');
       if (!ctx.alive) return;
@@ -1258,7 +1258,7 @@
         R.append(sec('link', 'Quiosque / TV', h('div', {class: 'hint', text: 'Para fixar um tema numa tela sem mexer nas configurações, use a URL:'}),
           h('div', {class: 'out', style: {marginTop: '8px'}, text:
             `${location.origin}/?skin=terminal&modo=verde#tv\n${location.origin}/?skin=grafana&modo=dark\n${location.origin}/?skin=material&modo=light&cor=%230b57d0`}),
-          h('div', {class: 'hint', style: {marginTop: '8px'}, text: 'skin: glass, terminal, grafana, material · modo: dark/light (terminal: verde, ambar, ciano) · cor: só no Material.'})));
+          h('div', {class: 'hint', style: {marginTop: '8px'}, text: 'skin: pro, glass, terminal, grafana, material, lagoa · modo: dark/light (terminal: verde, ambar, ciano · lagoa: lagoa, noite) · cor: só no Material.'})));
       }
 
       if (tab === 'integ') {

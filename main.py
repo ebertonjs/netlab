@@ -21,7 +21,7 @@ import stats
 import zabbix
 
 CFG = monitor.CFG
-APP_VERSION = "3.6"
+APP_VERSION = "3.8"
 STARTED_AT = time.time()
 
 RANGE_SECONDS = {"5m": 300, "1h": 3600, "24h": 86400, "7d": 7 * 86400, "30d": 30 * 86400}
@@ -1296,9 +1296,9 @@ async def cam_ws(websocket: WebSocket, src: str = ""):
 
 
 # ------------------------------------------------------------ aparência (skins)
-UI_SKINS = {"glass": ("dark", "light"), "terminal": ("verde", "ambar", "ciano"),
-            "grafana": ("dark", "light"), "material": ("light", "dark")}
-UI_DEFAULT = {"skin": "glass", "mode": "dark", "accent": "#6750a4"}
+UI_SKINS = {"pro": ("dark", "light"), "glass": ("dark", "light"), "terminal": ("verde", "ambar", "ciano"),
+            "grafana": ("dark", "light"), "material": ("light", "dark"), "lagoa": ("lagoa", "noite")}
+UI_DEFAULT = {"skin": "pro", "mode": "dark", "accent": "#6750a4"}
 
 
 @app.get("/api/settings/ui")

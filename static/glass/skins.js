@@ -1,9 +1,11 @@
 // NetNOC v3.2 — skins (temas que mudam a interface inteira).
 // Carregado no <head>: aplica a skin antes do primeiro paint (CSP não permite script inline).
-// Ordem de escolha: URL (?skin=terminal&modo=ambar&cor=%23ff7043) > escolha deste aparelho > padrão do servidor > Glass escuro.
+// Ordem de escolha: URL (?skin=terminal&modo=ambar&cor=%23ff7043) > escolha deste aparelho > padrão do servidor > Pro escuro.
 'use strict';
 (function () {
   const LIST = {
+    pro: {name: 'Pro', desc: 'Console de operações: menu lateral, superfícies planas em ardósia, azul de destaque e cores só para estado. Padrão.',
+      modes: [['dark', 'Escuro'], ['light', 'Claro']], nav: 'side'},
     glass: {name: 'Glass', desc: 'Vidro fosco, cards com imagem e dock flutuante. Feito para tablet na parede.',
       modes: [['dark', 'Escuro'], ['light', 'Claro']], nav: 'dock'},
     terminal: {name: 'NOC Terminal', desc: 'Monoespaçado, fósforo e scanlines. Destinos em tabela, navegação por teclas 1–0.',
@@ -12,9 +14,11 @@
       modes: [['dark', 'Escuro'], ['light', 'Claro']], nav: 'side'},
     material: {name: 'Material You', desc: 'Cores sólidas geradas a partir da sua cor de destaque, cantos grandes e barra inferior.',
       modes: [['light', 'Claro'], ['dark', 'Escuro']], nav: 'bottom', accent: true},
+    lagoa: {name: 'Lagoa', desc: 'Estilo painel de casa inteligente: fundo azul-petróleo, cards claros foscos, ícones verde-limão e barra em pílula.',
+      modes: [['lagoa', 'Petróleo'], ['noite', 'Noite']], nav: 'pill'},
   };
   const ACCENTS = ['#6750a4', '#0b57d0', '#00897b', '#2e7d32', '#f57c00', '#d81b60', '#5d4037', '#455a64'];
-  const DEF = {skin: 'glass', mode: 'dark', accent: '#6750a4'};
+  const DEF = {skin: 'pro', mode: 'dark', accent: '#6750a4'};
   const root = document.documentElement;
 
   function ls(k, v) {
@@ -91,16 +95,16 @@
     el = el || root;
     st = valid(st);
     el.setAttribute('data-skin', st.skin);
-    const darkish = st.skin === 'terminal' ? true : st.mode === 'dark';
+    const darkish = (st.skin === 'terminal' || st.skin === 'lagoa') ? true : st.mode === 'dark';
     el.setAttribute('data-theme', darkish ? 'dark' : 'light');
-    if (st.skin === 'terminal') el.setAttribute('data-variant', st.mode); else el.removeAttribute('data-variant');
+    if (st.skin === 'terminal' || st.skin === 'lagoa') el.setAttribute('data-variant', st.mode); else el.removeAttribute('data-variant');
     const mv = materialVars(st.accent, darkish);
     for (const k of Object.keys(mv)) {
       if (st.skin === 'material') el.style.setProperty(k, mv[k]); else el.style.removeProperty(k);
     }
     if (el === root) {
       const m = document.querySelector('meta[name="theme-color"]');
-      if (m) m.content = {glass: darkish ? '#1c1b36' : '#c9d6e8', terminal: '#050806', grafana: darkish ? '#111217' : '#f4f5f5', material: mv['--m-bg']}[st.skin];
+      if (m) m.content = {pro: darkish ? '#0b1120' : '#f4f6fa', glass: darkish ? '#1c1b36' : '#c9d6e8', terminal: '#050806', grafana: darkish ? '#111217' : '#f4f5f5', material: mv['--m-bg'], lagoa: st.mode === 'noite' ? '#0d1117' : '#0b1d2a'}[st.skin];
     }
     return st;
   }

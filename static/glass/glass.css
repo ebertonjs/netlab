@@ -246,6 +246,7 @@ html[data-density] .tvg { zoom: calc(1 / var(--zoom, 1)); }
   fill: var(--text); transform: rotate(-8deg);
 }
 .card-art .brand svg { width: 100%; height: 100%; fill: currentColor; }
+.card-art .brand svg[fill="none"], .tvg-card .brand svg[fill="none"] { fill: none; }  /* ícones de traço não viram blocos */
 .card-art .spark { position: absolute; left: 0; right: 0; top: 40px; height: 80px; width: 100%; }
 .card-art .fade {
   position: absolute; inset: 0;

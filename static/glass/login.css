@@ -1,23 +1,33 @@
-/* Login no visual glass da v3 (carregado depois do CSS clássico, sobrescreve) */
+/* Login no visual Pro (carregado depois do CSS clássico, sobrescreve) */
+html { color-scheme: dark; }
 html body {
-  background: radial-gradient(1000px 600px at 75% 10%, #2a2452, transparent 70%),
-    radial-gradient(800px 600px at 10% 90%, #1b2a52, transparent 70%), linear-gradient(160deg, #15142b, #2a2452);
-  background-size: auto; background-attachment: fixed; color: #eef0f8;
-}
-html body::after {
-  content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none; opacity: .5;
-  background: no-repeat center / 100% 100% url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1440 900' preserveAspectRatio='none'%3E%3Cg fill='none' stroke='%23a9b4ff' stroke-linecap='round'%3E%3Cpath d='M0 560 C 260 470 420 650 720 560 S 1180 430 1440 520' stroke-width='3' opacity='.5'/%3E%3Cpath d='M0 620 C 300 540 480 720 760 620 S 1200 490 1440 590' stroke-width='1.5' opacity='.35'/%3E%3C/g%3E%3C/svg%3E");
+  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; -webkit-font-smoothing: antialiased;
+  color: #e2e8f0; background: #0b1120;
+  background-image:
+    radial-gradient(60rem 36rem at 50% -10%, rgba(59, 130, 246, .22), transparent 70%),
+    linear-gradient(rgba(148, 163, 184, .05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 184, .05) 1px, transparent 1px);
+  background-size: auto, 40px 40px, 40px 40px; background-attachment: fixed;
 }
 html body .lg {
-  background: rgba(44, 46, 74, .62); border: 1px solid rgba(255, 255, 255, .1); border-radius: 34px;
-  backdrop-filter: blur(24px) saturate(140%); -webkit-backdrop-filter: blur(24px) saturate(140%);
-  box-shadow: 0 24px 60px rgba(5, 6, 20, .5), inset 0 1px 0 rgba(255, 255, 255, .08);
+  max-width: 380px; background: #111a2e; border: 1px solid rgba(148, 163, 184, .16); border-radius: 14px;
+  padding: 32px 28px 24px; box-shadow: 0 24px 60px rgba(2, 6, 18, .55);
 }
-html body .lg-logo { border-radius: 50%; background: radial-gradient(circle at 35% 30%, #ffc56b, #f59e2e); border: 0; box-shadow: 0 0 28px rgba(245, 158, 46, .5); }
-html body .lg-name { font-weight: 600; }
+html body .lg-brand { gap: 4px; margin-bottom: 22px; }
+html body .lg-logo { width: 48px; height: 48px; border: 0; border-radius: 12px; background: none; box-shadow: 0 8px 24px rgba(59, 130, 246, .35); }
+html body .lg-logo svg { display: block; border-radius: 12px; }
+html body .lg-name { font-size: 22px; font-weight: 700; letter-spacing: -.02em; margin-top: 10px; color: #f1f5f9; }
+html body .lg-sub, html body .lg-foot, html body .rem { color: #8b98ad; }
+html body label { color: #cbd5e1; font-size: 12.5px; font-weight: 500; letter-spacing: 0; text-transform: none; margin: 14px 0 6px; }
+html body .rem { font-size: 13px; }
 html body .fld input[type=text], html body .fld input[type=password] {
-  border-radius: 14px; background: rgba(255, 255, 255, .08); border-color: rgba(255, 255, 255, .14); color: #eef0f8;
+  height: 42px; border-radius: 8px; background: #0b1120; border: 1px solid rgba(148, 163, 184, .24); color: #f1f5f9; font-size: 14.5px;
 }
-html body .fld input:focus { border-color: #4f8dff; box-shadow: 0 0 0 3px rgba(79, 141, 255, .25); }
-html body button.go { border-radius: 23px; background: #4f8dff; box-shadow: 0 0 24px rgba(79, 141, 255, .45); }
-html body label, html body .lg-sub, html body .lg-foot, html body .rem { color: #a8afc5; }
+html body .fld input:focus { border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59, 130, 246, .25); }
+html body button.eye { display: grid; place-items: center; top: 3px; color: #8b98ad; }
+html body button.eye:focus-visible, html body button.go:focus-visible { outline: 2px solid #60a5fa; outline-offset: 2px; }
+html body .caps { color: #f59e0b; }
+html body .err { color: #f87171; font-weight: 500; }
+html body button.go { height: 42px; border-radius: 8px; background: #3b82f6; font-size: 14.5px; font-weight: 600; box-shadow: none; transition: background-color .15s; }
+html body button.go:hover { filter: none; background: #2563eb; }
+@media (prefers-reduced-motion: reduce) { html body button.go { transition: none; } }

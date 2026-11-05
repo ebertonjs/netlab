@@ -329,7 +329,9 @@ def _cookie_from(hdr):
 AUTH_OFF = os.environ.get("NETNOC_AUTH", "on").lower() == "off"
 PUBLIC_PATHS = {"/healthz", "/status", "/status.html", "/status.js", "/api/public/status",
                 "/login", "/login.js", "/api/login", "/api/loginfo", "/style.css", "/theme-grafana.css",
-                "/glass/login.css",
+                "/glass/login.css", "/glass/fonts.css", "/glass/fonts/inter-latin-400-normal.woff2",
+                "/glass/fonts/inter-latin-500-normal.woff2", "/glass/fonts/inter-latin-600-normal.woff2",
+                "/glass/fonts/inter-latin-700-normal.woff2",
                 "/manifest.webmanifest", "/sw.js", "/icon-192.png", "/icon-512.png", "/favicon.ico"}
 AGENT_PREFIX = "/api/agent/"
 METRICS_PATH = "/metrics"

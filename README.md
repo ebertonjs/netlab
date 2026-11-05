@@ -5,10 +5,10 @@ Painel de monitoramento de rede **self-hosted** (na interface ele se chama **Net
 ![Python](https://img.shields.io/badge/Python-3.9%2B-blue)
 ![FastAPI](https://img.shields.io/badge/FastAPI-backend-009688)
 ![SQLite](https://img.shields.io/badge/SQLite-embutido-003b57)
-![Versão](https://img.shields.io/badge/vers%C3%A3o-3.6-f59e2e)
+![Versão](https://img.shields.io/badge/vers%C3%A3o-3.8-3b82f6)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-![NetLAB — tema Glass escuro](docs/img/glass-escuro.jpg)
+![NetLAB — tema Pro escuro](docs/img/pro-escuro.jpg)
 
 ---
 
@@ -18,7 +18,7 @@ Painel de monitoramento de rede **self-hosted** (na interface ele se chama **Net
 - Checks **ICMP, TCP e HTTP/HTTPS** (código esperado e validade do certificado) e **multi-site** com agente leve para filiais
 - **Incidentes automáticos** que abrem e fecham sozinhos (offline, perda, latência, jitter, DNS lento, CPU/temperatura, câmera sem vídeo, HD do DVR). Queda local vira **um único alerta** em vez de dezenas
 - **Notificações** por Telegram, Discord, webhook assinado (HMAC), e-mail e navegador, com janelas de manutenção — no Telegram, a perda de vídeo chega com a **última foto da câmera**
-- **4 temas que mudam a interface inteira**, escolhidos por aparelho, com tamanho ajustável (Normal / Compacta / Mínima)
+- **6 temas que mudam a interface inteira** (o padrão é o **Pro**, um console de operações escuro/claro), escolhidos por aparelho, com tamanho ajustável (Normal / Compacta / Mínima)
 - **Página inicial completa**: indicadores (disponibilidade hoje/7 d/30 d, IP público, último speedtest, tempo sem quedas), disponibilidade de cada destino em blocos de 30 min, portas do MikroTik, aparelhos novos na rede, fotos das câmeras, AdGuard, DNS e saúde do servidor
 - **Mapa da rede em caixas**, estilo NOC: grupos de equipamentos ligados por linhas com pacotes animados, causa raiz em vermelho e dependentes como "isolados"
 - **Modo TV** com rodízio de cenas: visão geral, mapa da rede, equipamentos, últimas 24 h e câmeras
@@ -66,16 +66,22 @@ Além dos cards de cada destino, a página inicial mostra tudo o que importa sem
 
 Cada aparelho escolhe o seu em **Configurações → Aparência**. O admin define o padrão do servidor, e uma URL pode fixar o tema numa tela de quiosque.
 
-| Glass (escuro / claro) | NOC Terminal |
+| **Pro** (padrão, escuro / claro) | **Lagoa** |
 |---|---|
-| ![Glass claro](docs/img/glass-claro.jpg) | ![NOC Terminal](docs/img/terminal.jpg) |
+| ![Pro claro](docs/img/pro-claro.jpg) | ![Lagoa](docs/img/lagoa.jpg) |
+| **Glass** | **NOC Terminal** |
+| ![Glass](docs/img/glass-escuro.jpg) | ![NOC Terminal](docs/img/terminal.jpg) |
 | **Grafana / Zabbix** | **Material You** |
 | ![Grafana/Zabbix](docs/img/grafana.jpg) | ![Material You](docs/img/material.jpg) |
 
+- **Pro** — console de operações: menu lateral agrupado, superfícies planas em ardósia, um único azul de destaque e cores só para estado. Números tabulares, IPs em monoespaçada.
+- **Lagoa** — estilo painel de casa inteligente: fundo azul-petróleo, cards claros foscos, ícones verde-limão e barra em pílula.
 - **Glass** — vidro fosco, cards com imagem e dock flutuante. Feito para tablet na parede.
 - **NOC Terminal** — monoespaçado, fósforo verde/âmbar/ciano, destinos em tabela, navegação pelas teclas 1–0.
 - **Grafana / Zabbix** — painéis planos e densos com menu lateral fixo. Mais informação por tela no PC.
 - **Material You** — paleta inteira gerada a partir da sua cor de destaque.
+
+Ícones do conjunto [Lucide](https://lucide.dev) em todos os temas.
 
 ![Configurações → Aparência](docs/img/temas.jpg)
 
@@ -94,11 +100,13 @@ Para abrir direto numa TV: `http://IP:8000/#tv` — ou só algumas cenas: `/#tv?
 
 ---
 
-## 📈 Latência e celular
+## 📈 Latência, celular e login
 
 ![Latência e disponibilidade](docs/img/latencia.jpg)
 
-<p align="center"><img src="docs/img/celular.jpg" width="300" alt="NetNOC no celular"></p>
+| Celular | Login |
+|---|---|
+| <img src="docs/img/celular.jpg" width="280" alt="NetNOC no celular"> | ![Tela de login](docs/img/login.jpg) |
 
 ---
 
@@ -214,6 +222,7 @@ O `config.json` só é usado na primeira execução para popular o banco; depois
 
 | URL | O que faz |
 |---|---|
+| `/?skin=pro&modo=light` | Tema Pro claro nesta tela |
 | `/?skin=terminal&modo=verde#tv` | Modo TV no tema NOC Terminal |
 | `/?skin=grafana&modo=dark` | Força o tema Grafana nesta tela |
 | `/?skin=material&cor=%230b57d0` | Material You com outra cor |

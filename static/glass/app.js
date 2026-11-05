@@ -50,7 +50,14 @@
   // ------------------------------------------------------------------ formatação
   const num = v => (typeof v === 'number' && isFinite(v)) ? v : (v != null && v !== '' && isFinite(+v) ? +v : null);
   const ms = (v, d) => { v = num(v); return v == null ? '--' : (v >= 100 ? Math.round(v) : v.toFixed(d == null ? 1 : d)); };
-  const pct = (v, d) => { v = num(v); return v == null ? '--' : (v >= 99.995 && d !== 0 ? '100' : v.toFixed(d == null ? 1 : d)); };
+  const pct = (v, d) => {
+    v = num(v);
+    if (v == null) return '--';
+    if (v >= 99.995 && d !== 0) return '100';
+    const dd = d == null ? 1 : d, t = v.toFixed(dd);
+    // 99,96% não pode aparecer como "100.0%": abaixo de 100 arredonda para baixo (99.9)
+    return (v < 100 && parseFloat(t) >= 100) ? (Math.floor(v * 10 ** dd) / 10 ** dd).toFixed(dd) : t;
+  };
   const pad = n => String(n).padStart(2, '0');
   const hm = ts => { const d = new Date(ts * 1000); return pad(d.getHours()) + ':' + pad(d.getMinutes()); };
   const dmhm = ts => { const d = new Date(ts * 1000); return pad(d.getDate()) + '/' + pad(d.getMonth() + 1) + ' ' + hm(ts); };
@@ -355,8 +362,8 @@
 
   // ------------------------------------------------------------------ dock
   const DOCK = [
-    ['home', 'home', 'Início'], ['latency', 'activity', 'Latência'], ['incidents', 'alert', 'Incidentes'], ['cameras', 'video', 'Câmeras'],
-    ['dns', 'globe', 'DNS'], ['mikrotik', 'router', 'MikroTik'], ['adguard', 'shield', 'AdGuard'],
+    ['home', 'home', 'Início'], ['latency', 'activity', 'Latência'], ['incidents', 'alert', 'Incidentes'], ['cameras', 'camera', 'Câmeras'],
+    ['dns', 'dns', 'DNS'], ['mikrotik', 'router', 'MikroTik'], ['adguard', 'shield', 'AdGuard'],
     ['topology', 'network', 'Topologia'], ['tools', 'wrench', 'Ferramentas'], ['config', 'gear', 'Configurações'], ['sla', 'file', 'SLA'], ['tv', 'tv', 'Modo TV (T)'],
   ];
   function renderDock() {

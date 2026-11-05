@@ -119,8 +119,8 @@ def _validate(data):
         out["intervals"] = clean
     if "ui_default" in s:
         u = s["ui_default"]
-        skins = {"glass": ("dark", "light"), "terminal": ("verde", "ambar", "ciano"),
-                 "grafana": ("dark", "light"), "material": ("light", "dark")}
+        skins = {"pro": ("dark", "light"), "glass": ("dark", "light"), "terminal": ("verde", "ambar", "ciano"),
+                 "grafana": ("dark", "light"), "material": ("light", "dark"), "lagoa": ("lagoa", "noite")}
         import re as _re
         if not isinstance(u, dict) or u.get("skin") not in skins or u.get("mode") not in skins[u["skin"]] or \
                 not _re.fullmatch(r"#[0-9a-fA-F]{6}", str(u.get("accent", "#6750a4"))):

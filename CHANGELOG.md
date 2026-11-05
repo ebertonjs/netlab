@@ -1,5 +1,16 @@
 # Histórico de versões
 
+## v3.8 — visual Pro
+- Novo tema **Pro**, agora o padrão: console de operações com menu lateral agrupado (Monitoramento, Serviços, Sistema), superfícies planas em ardósia, um único azul de destaque e cores reservadas para estado (verde, âmbar, vermelho). Números em fonte tabular, endereços em monoespaçada. Escuro e claro.
+- **Ícones novos** em todo o painel (conjunto Lucide, traço uniforme), em todos os temas.
+- **Marca nova**: logo, ícone do app (PWA) e tela de login redesenhada. O login não carrega mais fontes da internet.
+- Ícones de traço no fundo dos cards não aparecem mais como blocos sólidos.
+- Quem já escolheu um tema continua com ele; para usar o novo: Configurações → Aparência → Pro.
+
+## v3.7 — tema Lagoa
+- Novo tema **Lagoa** (Configurações → Aparência), no estilo painel de casa inteligente: fundo azul-petróleo com brilho, cards claros foscos para o que está online e escuros para o que está fora, ícones verde-limão, botão de status no canto do card e barra de navegação em pílula com rótulos. Modos **Petróleo** e **Noite**. Vale também para a página inicial, mapa, telas e Modo TV.
+- Porcentagens logo abaixo de 100 (ex.: 99,96%) não aparecem mais como "100.0%".
+
 ## v3.6 — configuração e histórico em arquivos separados
 - `netnoc.db` agora guarda **só a configuração** (destinos, grupos, integrações, usuários, aparelhos do DHCP) e fica com poucos KB.
 - Pings, médias, DNS, speedtests, incidentes, eventos e logs vão para **`netnoc-historico.db`**, que pode ser apagado a qualquer momento (botão em Configurações → Geral → Dados, ou apagando o arquivo com o serviço parado). A configuração não é afetada.
