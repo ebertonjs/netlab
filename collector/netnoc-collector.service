@@ -1,0 +1,40 @@
+# /etc/systemd/system/netnoc-collector.service
+# O instalar-coletor.sh preenche USUARIO e PASTA sozinho. Rode como o MESMO usuário do netnoc.service
+# (os arquivos do banco e a netnoc.key são dele). Não precisa de root: só CAP_NET_RAW para o ICMP.
+[Unit]
+Description=NetNOC collector (ping, MikroTik, AdGuard) em Rust
+After=network-online.target netnoc.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=USUARIO
+WorkingDirectory=PASTA
+Environment=NETNOC_COLLECTOR_CONFIG=/etc/netnoc-collector.toml
+ExecStart=/usr/local/bin/netnoc-collector
+Restart=always
+RestartSec=3
+# SIGTERM: grava o último lote e fecha o banco; 20 s de folga antes do SIGKILL
+KillSignal=SIGTERM
+TimeoutStopSec=20
+
+# ICMP sem root
+AmbientCapabilities=CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_RAW
+NoNewPrivileges=true
+
+# proteção: só escreve na pasta do NetNOC
+ProtectSystem=strict
+ReadWritePaths=PASTA
+ProtectHome=read-only
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictNamespaces=true
+LockPersonality=true
+MemoryMax=64M
+
+[Install]
+WantedBy=multi-user.target

@@ -14,3 +14,6 @@ netnoc-backup*.json
 bin/
 go2rtc.yaml
 go2rtc.yaml.tmp
+# coletor Rust: saída da compilação
+collector/target/
+collector/medicoes.txt

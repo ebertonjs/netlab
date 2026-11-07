@@ -21,7 +21,7 @@ import stats
 import zabbix
 
 CFG = monitor.CFG
-APP_VERSION = "3.8"
+APP_VERSION = "3.9"
 STARTED_AT = time.time()
 
 RANGE_SECONDS = {"5m": 300, "1h": 3600, "24h": 86400, "7d": 7 * 86400, "30d": 30 * 86400}

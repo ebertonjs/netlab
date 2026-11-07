@@ -1,5 +1,13 @@
 # Histórico de versões
 
+## v3.9 — coletor em Rust (opcional)
+- Novo **`netnoc-collector`** (pasta `collector/`): binário Rust que assume o **ping** de todos os destinos (ICMP nativo, sem criar um processo `ping` a cada medição, mais TCP e HTTP), o **MikroTik** e o **AdGuard Home**, gravando no mesmo banco. Usa poucos MB de RAM, sondas em paralelo, 1 commit por segundo e encerramento limpo no SIGTERM. Veja `collector/README.md`.
+- O Python continua com a API, o painel, os incidentes, os rollups, o DHCP, o DNS e o speedtest. Com `NETNOC_EXTERNAL_COLLECTOR=ping,mikrotik,agh` ele para esses três workers e só lê as amostras novas para avaliar incidentes, sem mudar a lógica.
+- **Volta automática**: se o coletor parar, o NetNOC volta a coletar sozinho na hora (e registra um evento); quando o coletor reaparece, ele devolve a coleta. Para desfazer de vez: `collector/instalar-coletor.sh --remover`.
+- Configurações → Coletores mostra também `rust:ping`, `rust:mikrotik` e `rust:agh`.
+- `instalar-coletor.sh` (instala como serviço, sem root, só com `CAP_NET_RAW`) e `medir.sh` (CPU, RAM, forks e escrita no cartão, antes × depois).
+- `reinstalar.sh` para e reinicia o coletor junto com o NetNOC.
+
 ## v3.8 — visual Pro
 - Novo tema **Pro**, agora o padrão: console de operações com menu lateral agrupado (Monitoramento, Serviços, Sistema), superfícies planas em ardósia, um único azul de destaque e cores reservadas para estado (verde, âmbar, vermelho). Números em fonte tabular, endereços em monoespaçada. Escuro e claro.
 - **Ícones novos** em todo o painel (conjunto Lucide, traço uniforme), em todos os temas.

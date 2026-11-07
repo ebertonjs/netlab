@@ -5,7 +5,7 @@ Painel de monitoramento de rede **self-hosted** (na interface ele se chama **Net
 ![Python](https://img.shields.io/badge/Python-3.9%2B-blue)
 ![FastAPI](https://img.shields.io/badge/FastAPI-backend-009688)
 ![SQLite](https://img.shields.io/badge/SQLite-embutido-003b57)
-![Versão](https://img.shields.io/badge/vers%C3%A3o-3.8-3b82f6)
+![Versão](https://img.shields.io/badge/vers%C3%A3o-3.9-3b82f6)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 ![NetLAB — tema Pro escuro](docs/img/pro-escuro.jpg)
@@ -107,6 +107,14 @@ Para abrir direto numa TV: `http://IP:8000/#tv` — ou só algumas cenas: `/#tv?
 | Celular | Login |
 |---|---|
 | <img src="docs/img/celular.jpg" width="280" alt="NetNOC no celular"> | ![Tela de login](docs/img/login.jpg) |
+
+---
+
+## 🦀 Coletor em Rust (opcional)
+
+Para Raspberry Pi mais fraco: o binário **`netnoc-collector`** assume o ping (ICMP nativo, TCP e HTTP), o MikroTik e o AdGuard Home, gravando no mesmo banco. Ele usa poucos MB de RAM e não cria um processo a cada ping. O painel continua igual, e se o coletor parar, o NetNOC volta a coletar sozinho.
+
+Compilação, instalação como serviço e teste antes × depois: [`collector/README.md`](collector/README.md).
 
 ---
 
@@ -287,6 +295,7 @@ netlab/
 ├── monitor.py     # coletores supervisionados: ping, DNS, sistema, incidentes, integrações
 ├── dvr.py         # DVR Intelbras: CGI, eventos, fotos e go2rtc sob demanda
 ├── security.py    # login, sessões, CSRF, CSP, limite de tentativas
+├── collector/     # netnoc-collector (Rust, opcional): ping, MikroTik e AdGuard
 ├── db.py          # SQLite (WAL, um único escritor) e rollups 5 min / 1 h
 ├── stats.py · sla.py · checks.py · snmp.py · sites.py · zabbix.py · notifier.py · backup.py
 ├── agent.py       # agente para sites remotos

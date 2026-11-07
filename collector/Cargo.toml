@@ -1,0 +1,28 @@
+[package]
+name = "netnoc-collector"
+version = "3.9.0"
+edition = "2021"
+description = "Coletor do NetNOC: ping (ICMP/TCP/HTTP), MikroTik e AdGuard Home, gravando no mesmo SQLite do painel"
+license = "MIT"
+publish = false
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net", "signal", "sync"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+surge-ping = "0.8"
+fernet = { version = "0.2", default-features = false, features = ["rustcrypto"] }
+rand = "0.8"
+anyhow = "1"
+
+[profile.release]
+opt-level = "s"        # binário menor; ping/HTTP não precisam de -O3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

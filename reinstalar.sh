@@ -82,11 +82,24 @@ if [ -z "${NETNOC_REINST_COPY:-}" ] && [[ "$(cd "$(dirname "$0")" && pwd)" == "$
 fi
 
 svc_exists() { [ -f "$UNIT" ]; }
+# coletor em Rust (opcional): usa os mesmos arquivos do banco, então para junto e volta depois
+COLL_UNIT=/etc/systemd/system/netnoc-collector.service
+coll_exists() { [ -f "$COLL_UNIT" ]; }
+coll_start() {
+  if coll_exists && [ "$(systemctl is-enabled netnoc-collector 2>/dev/null || true)" = "enabled" ]; then
+    sudo systemctl start netnoc-collector 2>/dev/null && c_ok "Coletor (netnoc-collector) iniciado" || c_warn "Coletor não iniciou: journalctl -u netnoc-collector"
+  fi
+  return 0
+}
 # para o serviço e também um NetNOC rodado à mão no terminal (uvicorn com a pasta da instalação)
 svc_stop() {
   if svc_exists; then
     sudo systemctl stop netnoc 2>/dev/null || true
     c_ok "Serviço netnoc parado"
+  fi
+  if coll_exists; then
+    sudo systemctl stop netnoc-collector 2>/dev/null || true
+    c_ok "Coletor (netnoc-collector) parado"
   fi
   local pid cwd killed=0
   for pid in $(pgrep -f "uvicorn main:app" 2>/dev/null || true); do
@@ -205,6 +218,13 @@ case "$MODE" in
       sudo systemctl disable netnoc 2>/dev/null || true
       sudo rm -f "$UNIT"; sudo systemctl daemon-reload
     fi
+    if coll_exists; then
+      sudo systemctl disable --now netnoc-collector 2>/dev/null || true
+      sudo rm -f "$COLL_UNIT" /etc/systemd/system/netnoc.service.d/coletor.conf
+      sudo rmdir /etc/systemd/system/netnoc.service.d 2>/dev/null || true
+      sudo systemctl daemon-reload
+      c_ok "Coletor removido (o binário /usr/local/bin/netnoc-collector ficou)"
+    fi
     rm -rf "$APPDIR"
     c_ok "NetNOC removido. Seus dados estão em $BACKUP"
     echo "  Para instalar de novo com eles:  ./reinstalar.sh --restaurar $BACKUP"
@@ -219,6 +239,7 @@ case "$MODE" in
     install_fresh "$RESTORE_FROM"
     wait_up || die "O serviço não respondeu. Veja: journalctl -u netnoc -n 50 --no-pager"
     svc_check_boot
+    coll_start
     ;;
 
   reinstalar)
@@ -234,6 +255,7 @@ case "$MODE" in
       if [ -f "$BACKUP/netnoc.service" ]; then sudo cp "$BACKUP/netnoc.service" "$UNIT"; fi
       sudo systemctl daemon-reload; sudo systemctl enable --now netnoc 2>/dev/null || true
       sudo systemctl restart netnoc 2>/dev/null || true
+      coll_start
       die "Reinstalação cancelada; a versão anterior foi restaurada. Backup em $BACKUP"
     }
     trap rollback ERR
@@ -241,6 +263,7 @@ case "$MODE" in
     wait_up || rollback
     trap - ERR
     svc_check_boot
+    coll_start
     if ask "Tudo certo. Apagar a instalação antiga de $OLD (os dados continuam no backup)?"; then
       rm -rf "$OLD"
       c_ok "Instalação antiga removida"

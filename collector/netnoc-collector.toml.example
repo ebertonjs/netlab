@@ -1,0 +1,27 @@
+# /etc/netnoc-collector.toml — configuração do netnoc-collector
+# Variáveis de ambiente têm prioridade: NETNOC_DB, NETNOC_HIST_DB, NETNOC_KEY_FILE,
+# NETNOC_SECRET_KEY, NETNOC_COLLECTOR_LOG, NETNOC_COLLECTOR_MODULES.
+
+# netnoc.db do painel (o histórico netnoc-historico.db e a chave netnoc.key ficam ao lado)
+db = "/home/dietpi/netnoc/netnoc/netnoc.db"
+# hist_db = "/home/dietpi/netnoc/netnoc/netnoc-historico.db"
+# key_file = "/home/dietpi/netnoc/netnoc/netnoc.key"
+
+# trace | debug | info | warn | error
+log_level = "info"
+
+# de quanto em quanto tempo relê destinos, intervalos e integrações (o que você muda na UI)
+settings_reload_secs = 5
+
+[modules]
+ping = true       # ICMP / TCP / HTTP de todos os destinos
+mikrotik = true   # system/resource, system/health e interfaces
+agh = true        # AdGuard Home /control/stats
+
+[ping]
+tick_ms = 200          # precisão do agendador
+flush_ms = 1000        # junta os resultados e grava 1 commit por segundo (poupa o cartão SD)
+icmp_timeout_ms = 1000
+tcp_timeout_ms = 2000
+http_timeout_ms = 5000
+max_inflight = 64      # sondas simultâneas no máximo

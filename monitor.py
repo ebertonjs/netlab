@@ -37,6 +37,7 @@ _next_due = {}
 _clean_since = {}         # target -> ts: falhas anteriores não contam para perda/jitter (pós-recuperação)
 _inflight = {}            # target -> (target_dict, submitted_ts, future)
 _started_at = time.time()
+_ingest_last_id = None    # último id de pings já lido (coletor externo)
 _targets_cache = None
 _intervals_cache = None
 
@@ -798,11 +799,13 @@ def probe_target(t):
     return ping_host(t["host"])
 
 
-def _record_result(name, ts, lat):
+def _record_result(name, ts, lat, jitter=None):
+    """Atualiza a janela em memória. `jitter` vem pronto quando a amostra foi lida do banco (coletor externo)."""
     ok = lat is not None
     with _state_lock:
         prev = _last_latency.get(name)
-        jitter = abs(lat - prev) if (ok and prev is not None) else 0
+        if jitter is None:
+            jitter = abs(lat - prev) if (ok and prev is not None) else 0
         if ok:
             _last_latency[name] = lat
         _win.setdefault(name, deque(maxlen=WINDOW)).append((ts, lat, ok, jitter))
@@ -849,6 +852,8 @@ def window_snapshot():
 
 def warm_state():
     """Preenche as janelas deslizantes a partir do banco ao iniciar."""
+    global _ingest_last_id
+    _ingest_last_id = (db.query_w("SELECT MAX(id) m FROM pings") or [{"m": 0}])[0]["m"] or 0
     for t in get_targets():
         rows = db.query_w("SELECT ts, latency, success, jitter FROM pings WHERE target=? AND ts>=? "
                           "ORDER BY ts DESC LIMIT ?", (t["name"], time.time() - max(WINDOW_S, 3600), WINDOW))
@@ -998,14 +1003,147 @@ def ping_cycle(force=False):
         rows.append(_record_result(n, ts, lat))
         done.append(n)
     db.insert_pings(rows)
+    _evaluate_done(done, items)
+    return len(rows)
+
+
+def _evaluate_done(done, items):
     if not done:
-        return 0
+        return
     local = [t["name"] for t in items if t.get("type") != "agent"]
     if _check_local_outage(local):
-        return len(rows)
-    for n in done:
+        return
+    for n in dict.fromkeys(done):
         evaluate_target_health(n, items)
+
+
+# ------------------------------------------------- coletor externo (netnoc-collector, Rust)
+# NETNOC_EXTERNAL_COLLECTOR=ping,mikrotik,agh  -> esses módulos são coletados pelo binário Rust.
+# Sem a variável, tudo roda aqui como antes. Se o coletor parar (heartbeat com mais de
+# EXTERNAL_STALE_S), o Python volta a coletar sozinho até ele reaparecer.
+EXTERNAL = {m.strip().lower() for m in os.environ.get("NETNOC_EXTERNAL_COLLECTOR", "").split(",")
+            if m.strip().lower() in ("ping", "mikrotik", "agh")}
+EXTERNAL_STALE_S = int(os.environ.get("NETNOC_EXTERNAL_STALE", "60"))
+_ext_cache = {"t": 0.0, "alive": False, "info": {}}
+_ext_mode = {}            # módulo -> True (externo) / False (interno): para logar as trocas
+
+
+def _external_alive():
+    now = time.time()
+    if now - _ext_cache["t"] < 3:
+        return _ext_cache["alive"]
+    alive, info = False, {}
+    try:
+        r = db.query_w("SELECT value, ts FROM meta WHERE key='collector:heartbeat'")
+        if r:
+            info = json.loads(r[0]["value"] or "{}")
+            alive = not info.get("stopped") and now - float(r[0]["ts"] or 0) < EXTERNAL_STALE_S
+    except Exception:
+        pass
+    # recém-iniciado: dá tempo ao coletor de subir antes de assumir que ele não existe
+    if not alive and now - _started_at < EXTERNAL_STALE_S and not info.get("stopped"):
+        alive = True
+    _ext_cache.update(t=now, alive=alive, info=info)
+    return alive
+
+
+def external_active(mod):
+    """True se `mod` está entregue ao coletor externo e ele está vivo."""
+    if mod not in EXTERNAL:
+        return False
+    on = _external_alive()
+    if _ext_mode.get(mod) != on:
+        if mod in _ext_mode:          # não loga a primeira decisão, só as trocas
+            log_event(f"Coletor externo ({mod}): " + ("assumiu a coleta" if on else
+                      "sem sinal — coleta voltou para o NetNOC"), "Info" if on else "Media")
+        _ext_mode[mod] = on
+    return on
+
+
+def ingest_pings():
+    """Lê as amostras gravadas pelo coletor externo e passa pela mesma avaliação do ciclo interno
+    (janela em memória, offline/perda/latência/jitter, queda local). Não grava nada em pings."""
+    global _ingest_last_id
+    if _ingest_last_id is None:
+        _ingest_last_id = (db.query_w("SELECT MAX(id) m FROM pings") or [{"m": 0}])[0]["m"] or 0
+        return 0
+    rows = db.query_w("SELECT id, target, ts, latency, success, jitter FROM pings WHERE id>? ORDER BY id LIMIT 5000",
+                      (_ingest_last_id,))
+    if not rows:
+        return 0
+    _ingest_last_id = rows[-1]["id"]
+    items = get_targets()
+    names = {t["name"] for t in items}
+    done = []
+    for r in rows:
+        n = r["target"]
+        if n not in names:
+            continue
+        lat = r["latency"] if r["success"] else None
+        _record_result(n, r["ts"], lat, r["jitter"] or 0)
+        done.append(n)
+    _evaluate_done(done, items)
     return len(rows)
+
+
+def ping_tick():
+    """Laço "ping": coleta aqui ou só lê o que o coletor externo gravou."""
+    global _ingest_last_id
+    if external_active("ping"):
+        for n, (_t, _ts, f) in list(_inflight.items()):      # sondas internas que ficaram em voo
+            f.cancel()
+            _inflight.pop(n, None)
+        return ingest_pings()
+    if "ping" in EXTERNAL:
+        _ingest_last_id = None          # na volta para o externo, começa do que existir então
+    return ping_cycle()
+
+
+def mikrotik_tick():
+    if external_active("mikrotik"):
+        _load_mt_comments()
+        cfg = get_mikrotik()
+        if cfg["enabled"] and cfg["host"]:
+            sync_dhcp_leases()          # promoção de aparelhos do DHCP continua no Python
+        return
+    mikrotik_once()
+
+
+def agh_tick():
+    if external_active("agh"):
+        return
+    agh_once()
+
+
+def _load_mt_comments():
+    try:
+        v = db.get_meta("mt_comments")
+        if v:
+            _mt_comment.clear()
+            _mt_comment.update(json.loads(v))
+    except Exception:
+        pass
+
+
+def external_health():
+    """Estado dos módulos do coletor externo (meta collector:*), no formato do worker_health."""
+    if not EXTERNAL:
+        return []
+    out, now = [], time.time()
+    alive = _external_alive()
+    for mod in sorted(EXTERNAL):
+        try:
+            r = db.query_w("SELECT value FROM meta WHERE key=?", ("collector:" + mod,))
+            h = json.loads(r[0]["value"]) if r else {}
+        except Exception:
+            h = {}
+        iv = h.get("interval") or 60
+        last = h.get("last_run")
+        stalled = not alive or last is None or now - last > max(iv * 3, 30) + 30
+        out.append({"name": "rust:" + mod, "interval": iv, "last_run": last, "last_ok": h.get("last_ok"),
+                    "runs": h.get("runs", 0), "errors": h.get("errors", 0), "error": h.get("error"),
+                    "status": "stalled" if stalled else ("error" if h.get("error") else "ok")})
+    return out
 
 
 # --------------------------------------------------------------- laço supervisionado
@@ -1069,6 +1207,10 @@ def worker_health():
         out.append({"name": name, "interval": iv, "last_run": last, "last_ok": h.get("last_ok"),
                     "runs": h.get("runs", 0), "errors": h.get("errors", 0), "error": h.get("error"),
                     "status": "stalled" if stalled else ("error" if h.get("error") else "ok")})
+    try:
+        out += external_health()
+    except Exception:
+        pass
     return out
 
 
@@ -1342,16 +1484,18 @@ def start_all():
     reconcile_incidents()
     warm_state()
     log_event(f"{get_app_name()} iniciado", "Info")
+    if EXTERNAL:
+        print(f"[coletor] módulos entregues ao netnoc-collector: {', '.join(sorted(EXTERNAL))}", flush=True)
     iv = lambda k: (lambda: get_intervals()[k])
     loops = (
-        ("ping", ping_cycle, lambda: 1, 0),
+        ("ping", ping_tick, lambda: 1, 0),
         ("dns", dns_once, iv("dns_check_interval_seconds"), 2),
         ("ip_publico", public_ip_once, iv("public_ip_interval_seconds"), 1),
         ("sistema", system_once, iv("system_interval_seconds"), 0),
         ("rollup", stats.run_rollups, lambda: 60, 5),
         ("limpeza", prune_once, lambda: 3600, 120),
-        ("mikrotik", mikrotik_once, lambda: _setting_interval("mikrotik", 60), 3),
-        ("adguard", agh_once, lambda: _setting_interval("agh", 60), 4),
+        ("mikrotik", mikrotik_tick, lambda: _setting_interval("mikrotik", 60), 3),
+        ("adguard", agh_tick, lambda: _setting_interval("agh", 60), 4),
         ("certificados", cert_once, lambda: 6 * 3600, 30),
         ("snmp", snmp_once, lambda: 5, 6),
         ("sites", sites_once, lambda: 30, 10),
