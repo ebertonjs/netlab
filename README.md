@@ -5,7 +5,7 @@ Painel de monitoramento de rede **self-hosted** (na interface ele se chama **Net
 ![Python](https://img.shields.io/badge/Python-3.9%2B-blue)
 ![FastAPI](https://img.shields.io/badge/FastAPI-backend-009688)
 ![SQLite](https://img.shields.io/badge/SQLite-embutido-003b57)
-![Versão](https://img.shields.io/badge/vers%C3%A3o-3.10-3b82f6)
+![Versão](https://img.shields.io/badge/vers%C3%A3o-3.12-3b82f6)
 ![Licença](https://img.shields.io/badge/licen%C3%A7a-uso%20gratuito-orange)
 
 ![NetLAB — tema Pro escuro](docs/img/pro-escuro.jpg)
@@ -21,6 +21,10 @@ Painel de monitoramento de rede **self-hosted** (na interface ele se chama **Net
 - **6 temas que mudam a interface inteira** (o padrão é o **Pro**, um console de operações escuro/claro), escolhidos por aparelho, com tamanho ajustável (Normal / Compacta / Mínima)
 - **Página inicial completa**: indicadores (disponibilidade hoje/7 d/30 d, IP público, último speedtest, tempo sem quedas), disponibilidade de cada destino em blocos de 30 min, portas do MikroTik, aparelhos novos na rede, fotos das câmeras, AdGuard, DNS e saúde do servidor
 - **Mapa da rede em caixas**, estilo NOC: grupos de equipamentos ligados por linhas com pacotes animados, causa raiz em vermelho e dependentes como "isolados"
+- **Diagnóstico automático da causa**: quando algo cai, o NetNOC investiga sozinho (gateway, internet, DNS, MikroTik/PPPoE/WAN, quedas simultâneas, traceroute) e diz se foi a operadora, energia, um aparelho, o DNS ou a sua rede — com evidências
+- **A rede contada**: a página inicial abre com uma frase e a linha do tempo dos episódios com a causa de cada um, e o diário da rede chega todo dia no Telegram
+- **Ações pelo Telegram com confirmação**: reiniciar o PPPoE, acordar um PC (Wake-on-LAN), bloquear um aparelho; aviso de aparelho novo na rede e quem está usando a banda agora
+- **Máquina do tempo**: arraste a régua do mapa e veja a rede como estava em qualquer momento dos últimos 7 dias
 - **Bot no Telegram** com IA opcional (Gemini ou Groq, cota grátis): pergunte "como está o ping pro Google?" e receba o relatório
 - **Modo TV** com rodízio de cenas: visão geral, mostradores, mapa da rede, equipamentos, últimas 24 h e câmeras
 - **Speedtest automático** diário no horário que você escolher
@@ -88,6 +92,28 @@ Cada aparelho escolhe o seu em **Configurações → Aparência**. O admin defin
 
 ---
 
+## 🔎 Diagnóstico automático
+
+Quando um destino cai ou piora, o NetNOC não manda só "Google offline": em ~15 s ele investiga e manda a causa provável.
+
+```
+🔎 Diagnóstico · Google, Cloudflare
+Causa provável: Operadora: a conexão PPPoE caiu (confiança alta)
+Sua rede está normal (o gateway responde), mas a conexão pppoe-out1 está desconectada.
+
+Evidências:
+✅ Gateway 192.168.88.1: responde (0,8 ms, perda 0%)
+❌ Internet (Cloudflare 1.1.1.1): sem resposta
+✅ MikroTik no ar há 12d 4h · CPU 3%
+❌ Conexão pppoe-out1: DESCONECTADA
+✅ Porta WAN ether1: com link
+
+O que fazer:
+→ Se não voltar em alguns minutos, ligue para a operadora
+```
+
+Causas reconhecidas: operadora (PPPoE, ONU sem link, internet fora, instabilidade), falha local, MikroTik reiniciou, falta de energia no servidor, um aparelho só, equipamento do qual outros dependem, parte da rede local, serviço externo, DNS, perda dentro da rede e banda saturada. Funciona sem MikroTik (com menos evidências) e sem IA.
+
 ## 🤖 Bot no Telegram
 
 O mesmo bot que manda os alertas também responde. Configure em **Configurações → Alertas → Bot e IA no Telegram** (o token e o Chat ID do Telegram precisam estar preenchidos; o bot só conversa com esse chat).
@@ -99,6 +125,15 @@ O mesmo bot que manda os alertas também responde. Configure em **Configuraçõe
 | `/trace <destino ou IP>` | traceroute |
 | `/alertas` | incidentes abertos e das últimas 24 h |
 | `/mk` | MikroTik: CPU, temperatura e tráfego das portas |
+| `/diagnostico [destino]` | investiga a causa agora (rede toda ou um destino) |
+| `/diario` | resumo das últimas 24 h com a causa de cada queda |
+| `/banda` | quem está usando a internet agora (por aparelho) |
+| `/aparelhos` · `/bloqueados` | aparelhos conectados, novos da semana e bloqueados |
+| `/pppoe` | reinicia a conexão PPPoE — pede confirmação |
+| `/acordar <PC>` | liga o computador pela rede (Wake-on-LAN) — pede confirmação |
+| `/bloquear` · `/desbloquear <aparelho>` | corta ou libera o acesso do aparelho — pede confirmação |
+
+**Ações** (reiniciar, acordar, bloquear) vêm desligadas: ative em Configurações → Alertas → Bot → "Permitir ações no roteador". Cada uma chega com os botões **Sim / Cancelar** e só acontece no "Sim". O usuário do MikroTik precisa de permissão de escrita; o bloqueio usa a lista `netnoc-bloqueados` e cria uma regra "NetNOC" no topo do firewall (apague-a para desfazer tudo).
 
 **Com IA** (opcional), dá para perguntar em português: *"a internet caiu essa noite?"*, *"por que o Quad9 está lento?"*, *"faz um traceroute pro 1.1.1.1"*. A IA escolhe as consultas, o NetNOC executa e ela escreve a resposta. Duas opções com cota grátis:
 
@@ -288,7 +323,7 @@ Para zerar o histórico: **Configurações → Geral → Dados → Apagar histó
 
 1. Gere o token em **Configurações → Segurança**.
 2. Em cada alvo, informe o site (ex.: `filial-a`).
-3. No site remoto: `python3 agent.py --url https://noc.exemplo:8000 --site filial-a --token TOKEN`
+3. No site remoto (copie `agente/agent.py`): `python3 agent.py --url https://noc.exemplo:8000 --site filial-a --token TOKEN`
 
 ### Prometheus
 
@@ -313,27 +348,40 @@ Para uma instalação limpa sem perder nada: `./reinstalar.sh` faz backup da con
 
 ## 🗂️ Estrutura
 
+O código fica no pacote `netnoc/`, **um módulo por pasta**, cada uma com um README que explica o que faz, o histórico de mudanças e as próximas melhorias.
+
 ```
 netlab/
-├── main.py        # API FastAPI + rotas do frontend
-├── monitor.py     # coletores supervisionados: ping, DNS, sistema, incidentes, integrações
-├── dvr.py         # DVR Intelbras: CGI, eventos, fotos e go2rtc sob demanda
-├── security.py    # login, sessões, CSRF, CSP, limite de tentativas
-├── collector/     # netnoc-collector (Rust, opcional): ping, MikroTik e AdGuard
-├── db.py          # SQLite (WAL, um único escritor) e rollups 5 min / 1 h
-├── stats.py · sla.py · checks.py · snmp.py · sites.py · zabbix.py · notifier.py · backup.py
-├── agent.py       # agente para sites remotos
-├── install.sh · reinstalar.sh · manage.py · config.json · requirements.txt
-├── static/
-│   ├── app.html             # interface v3
-│   ├── glass/               # temas, modo TV, player de câmeras, fontes locais
-│   └── index.html           # interface clássica (/classic)
-├── docs/          # notas de cada atualização e capturas de tela
-├── INSTALL.md     # tutorial de instalação
-└── CHANGELOG.md   # histórico de versões
+├── main.py                 # ponto de entrada (o serviço continua com: uvicorn main:app)
+├── netnoc/
+│   ├── nucleo/             # banco (SQLite), segurança e senhas cifradas, estatísticas, backup
+│   ├── coleta/             # ping/TCP/HTTP, incidentes, DNS, sistema, MikroTik, AdGuard, SNMP, agentes
+│   ├── analise/            # diagnóstico da causa, a rede contada + diário, máquina do tempo, SLA
+│   ├── alertas/            # Telegram, Discord, webhook, e-mail, manutenção
+│   ├── bot/                # bot do Telegram, IA (Gemini/Groq), ações com confirmação
+│   ├── integracoes/        # DVR/câmeras (go2rtc), Zabbix
+│   └── web/                # API FastAPI e páginas
+├── static/                 # interface (app.html + glass/: temas, Modo TV, mapa, mostradores)
+├── collector/              # netnoc-collector em Rust (opcional): ping, MikroTik, AdGuard
+├── agente/                 # agente para sites remotos (script independente)
+├── manage.py               # utilitário: reset-admin, set-password
+├── install.sh · reinstalar.sh · config.json · requirements.txt
+├── docs/ · INSTALL.md · CHANGELOG.md
+└── LICENSE · THIRD-PARTY-NOTICES.txt
 ```
 
----
+| Módulo | Para que serve |
+|---|---|
+| [`netnoc/nucleo`](netnoc/nucleo/README.md) | onde os dados ficam e quem pode entrar |
+| [`netnoc/coleta`](netnoc/coleta/README.md) | mede a rede e decide quando algo virou problema |
+| [`netnoc/analise`](netnoc/analise/README.md) | por que caiu, o que aconteceu, como estava |
+| [`netnoc/alertas`](netnoc/alertas/README.md) | para onde vão os avisos |
+| [`netnoc/bot`](netnoc/bot/README.md) | conversa e age pelo Telegram |
+| [`netnoc/integracoes`](netnoc/integracoes/README.md) | câmeras e Zabbix |
+| [`netnoc/web`](netnoc/web/README.md) | a API e as páginas |
+| [`static`](static/README.md) | a interface |
+| [`collector`](collector/README.md) | coletor em Rust |
+| [`agente`](agente/README.md) | sites remotos |
 
 ## 🛠️ Notas técnicas
 

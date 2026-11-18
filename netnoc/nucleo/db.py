@@ -7,7 +7,7 @@ import sqlite3, time, threading, os
 DB_PATH = os.environ.get("NETNOC_DB", "netnoc.db")
 HIST_PATH = os.environ.get("NETNOC_HIST_DB") or os.path.join(os.path.dirname(os.path.abspath(DB_PATH)), "netnoc-historico.db")
 HIST_TABLES = ("pings", "pings_5m", "pings_1h", "port_checks", "dns_checks", "speedtests", "incidents", "events",
-               "meta", "snmp_samples", "audit_log", "mikrotik_resource", "mikrotik_iface", "agh_stats")
+               "meta", "snmp_samples", "audit_log", "mikrotik_resource", "mikrotik_iface", "agh_stats", "diagnoses")
 _lock = threading.RLock()          # único escritor
 _local = threading.local()         # conexões de leitura por thread
 _wconn = None
@@ -109,6 +109,14 @@ CREATE TABLE IF NOT EXISTS h.incidents(
 CREATE INDEX IF NOT EXISTS h.idx_inc_started ON incidents(started_ts);
 
 CREATE INDEX IF NOT EXISTS h.idx_inc_open ON incidents(resolved_ts);
+
+CREATE TABLE IF NOT EXISTS h.diagnoses(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL, end_ts REAL, incident_ids TEXT, targets TEXT, kind TEXT, cause TEXT, confidence TEXT,
+    title TEXT, text TEXT, evidence TEXT, tips TEXT
+);
+
+CREATE INDEX IF NOT EXISTS h.idx_diag_ts ON diagnoses(ts);
 
 CREATE TABLE IF NOT EXISTS h.events(
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -332,6 +340,7 @@ def prune_old(days, raw_days=7, hourly_days=365):
     for t in ("port_checks", "dns_checks", "mikrotik_resource", "mikrotik_iface", "agh_stats"):
         execute(f"DELETE FROM {t} WHERE ts < ?", (cutoff,))
     execute("DELETE FROM events WHERE ts < ?", (now - max(days, 90) * 86400,))
+    execute("DELETE FROM diagnoses WHERE ts < ?", (now - max(days, 90) * 86400,))
     execute("DELETE FROM audit_log WHERE ts < ?", (now - 365 * 86400,))
     vacuum_incremental()
     checkpoint()

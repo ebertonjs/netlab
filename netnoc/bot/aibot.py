@@ -10,16 +10,16 @@ Segurança:
 - Ping/traceroute com host validado, limite de quantidade e de uso por minuto.
 - Chaves das IAs cifradas no banco (mesmo esquema das outras senhas); erros nunca expõem chave/token.
 """
-import json, re, subprocess, threading, time
+import json, re, secrets, subprocess, threading, time
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 import requests
 
-import db
-import monitor
-import security
+from netnoc.nucleo import db
+from netnoc.coleta import monitor
+from netnoc.nucleo import security
 
 # ------------------------------------------------------------------ configuração
 SECRET = ("gemini_key", "groq_key")
@@ -29,6 +29,10 @@ DEFAULTS = {
     "gemini_key": "", "gemini_model": "gemini-3.5-flash-lite",
     "groq_key": "", "groq_model": "openai/gpt-oss-120b",
     "any_host": True,               # ping/traceroute para endereços fora dos destinos cadastrados
+    "diary": False,                 # diário da rede no Telegram todo dia
+    "diary_time": "07:00",
+    "actions": False,               # ações no roteador (PPPoE, bloquear, acordar) — sempre com confirmação
+    "new_devices": True,            # avisa quando um aparelho novo aparece no DHCP
 }
 PROVIDERS = ("none", "gemini", "groq")
 MAX_ROUNDS = 6                      # chamadas de ferramenta por pergunta
@@ -43,6 +47,10 @@ _hist = {}                          # chat_id -> deque[(ts, role, text)]
 _tool_ts = deque()
 _lock = threading.Lock()
 _pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="aibot")
+_ctx = threading.local()            # chat da conversa em andamento (para as ferramentas que pedem confirmação)
+_pending = {}                       # token -> ação esperando o "Sim"
+ACTION_TTL = 180                    # s para confirmar uma ação pedida
+NEWDEV_TTL = 3600                   # s para o botão "Bloquear" do aviso de aparelho novo
 
 
 def get_cfg():
@@ -62,7 +70,10 @@ def set_cfg(cfg):
         if not valid_model(m):
             raise ValueError("Nome de modelo inválido")
         out[k] = m
-    out["enabled"], out["any_host"] = bool(out["enabled"]), bool(out["any_host"])
+    for k in ("enabled", "any_host", "diary", "actions", "new_devices"):
+        out[k] = bool(out[k])
+    if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", str(out["diary_time"] or "")):
+        raise ValueError("Horário do diário inválido (use HH:MM)")
     security.save_secret_cfg("ai_bot", out, SECRET)
 
 
@@ -158,21 +169,8 @@ def _resolve(dest):
 
 def _icmp(host, n):
     """Pings ICMP pelo `ping` do sistema: lista de ms (None = perdido)."""
-    cmd = ["ping", "-n", "-c", str(n), "-i", "0.3", "-W", "1", host]
-    if monitor.IS_WINDOWS:
-        cmd = ["ping", "-n", str(n), "-w", "1000", host]
-    try:
-        p = subprocess.run(cmd, capture_output=True, text=True, timeout=n * 1.5 + 5)
-        out = p.stdout
-        if p.returncode == 2 and not out and "-i" in cmd:          # ping sem suporte a -i (ex.: busybox antigo)
-            cmd = [c for i, c in enumerate(cmd) if c != "-i" and (i == 0 or cmd[i - 1] != "-i")]
-            out = subprocess.run(cmd, capture_output=True, text=True, timeout=n * 2 + 5).stdout
-    except subprocess.TimeoutExpired:
-        return [None] * n
-    except FileNotFoundError:
-        raise RuntimeError("comando ping não encontrado no servidor")
-    got = [float(x) for x in re.findall(r"time[=<]([\d.]+)", out)]
-    return got + [None] * max(0, n - len(got))
+    from netnoc.coleta import checks
+    return checks.ping_many(host, n)
 
 
 def _history_24h(name):
@@ -193,7 +191,7 @@ def tool_ping(destino, quantidade=5):
     if kind == "icmp":
         samples = _icmp(host, n)
     else:
-        import checks
+        from netnoc.coleta import checks
         samples = []
         for _ in range(n):
             samples.append(checks.probe(t))
@@ -217,7 +215,7 @@ def tool_traceroute(destino):
     _, host, _ = _resolve(destino)
     if not _rate_ok():
         raise RuntimeError("limite de testes por minuto atingido")
-    import checks
+    from netnoc.coleta import checks
     hops = checks.traceroute(host, 20)
     return {"host": host, "saltos": [{"n": h["hop"], "ip": h["ip"] or "*", "ms": _r(h["ms"])} for h in hops]}
 
@@ -302,6 +300,61 @@ def tool_servidor():
             "netnoc_rodando_ha": _dur(s.get("app_uptime_s")), "coletores_com_problema": s.get("workers_bad")}
 
 
+def tool_diagnosticar(destino=None):
+    from netnoc.analise import diagnose
+    if destino:
+        t, host, _ = _resolve(destino)
+        if not t:
+            raise ValueError("o diagnóstico completo é para destinos cadastrados; para outros endereços use ping ou traceroute")
+        names = [t["name"]]
+    else:
+        names = []
+    if not _rate_ok():
+        raise RuntimeError("limite de testes por minuto atingido")
+    with diagnose._lock:
+        d = diagnose.investigate("check", names)
+    return {"causa": d["title"], "confianca": d["confidence"], "explicacao": d["text"], "o_que_fazer": d["tips"],
+            "evidencias": [("ok: " if e["ok"] else "falha: " if e["ok"] is False else "") + e["txt"] for e in d["evidence"]]}
+
+
+def tool_diagnosticos(horas=48):
+    from netnoc.analise import story
+    eps = story.episodes(max(1, min(int(horas or 48), 24 * 30)))
+    return {"episodios": [{"inicio": _hm(e["start"]), "fim": _hm(e["end"]) if e["end"] else "em aberto", "duracao": _dur(e["duration_s"]),
+                           "o_que": e["title"], "causa_provavel": e["cause"], "explicacao": e["text"]} for e in eps[:25]]}
+
+
+def tool_banda():
+    from netnoc.bot import actions
+    r = actions.bandwidth_top(3)
+    return {"medido_por": r["method"], "total_download": _bps(r["total_down_bps"]), "total_upload": _bps(r["total_up_bps"]),
+            "aparelhos": [{"nome": d["name"], "ip": d["ip"], "download": _bps(d["down_bps"]), "upload": _bps(d["up_bps"])} for d in r["devices"]]}
+
+
+def tool_aparelhos(dias=7):
+    from netnoc.bot import actions
+    lim = time.time() - max(1, min(int(dias or 7), 90)) * 86400
+    devs = actions.devices()
+    return {"total": len(devs), "conectados_agora": sum(1 for d in devs if d["active"]),
+            "novos_no_periodo": [{"nome": d["hostname"] or "sem nome", "ip": d["ip"], "mac": d["mac"], "primeira_vez": _hm(d["first_seen"])}
+                                 for d in devs if (d["first_seen"] or 0) >= lim][:20]}
+
+
+def tool_acao(acao, aparelho=None):
+    chat = getattr(_ctx, "chat", None)
+    if not chat or chat == "painel":
+        return {"erro": "ações só podem ser confirmadas pelo Telegram"}
+    kind = {"reiniciar_pppoe": "pppoe", "acordar": "wake", "bloquear": "block", "desbloquear": "unblock"}.get(acao)
+    if not kind:
+        return {"erro": "ação desconhecida"}
+    text, kb = propose(chat, kind, aparelho)
+    if not kb:
+        return {"erro": text}
+    tg = monitor.get_telegram()
+    _send(tg["bot_token"], chat, text, kb)
+    return {"status": "pedido de confirmação enviado com os botões Sim/Cancelar; a ação só acontece se o usuário tocar em Sim"}
+
+
 S_DEST = {"type": "string", "description": "Nome de um destino cadastrado (ex.: Google DNS) ou IP/domínio"}
 TOOLS = [
     ("status_rede", tool_status, "Situação atual: internet, todos os destinos (latência, jitter, perda, disponibilidade 24h) e incidentes abertos.", {}, []),
@@ -316,6 +369,17 @@ TOOLS = [
     ("dns", tool_dns, "Servidores DNS monitorados: se respondem e com que latência.", {}, []),
     ("speedtest", tool_speedtest, "Últimos testes de velocidade (download, upload, latência).", {}, []),
     ("servidor", tool_servidor, "Servidor onde roda o NetNOC: CPU, RAM, temperatura, disco e coletores.", {}, []),
+    ("diagnosticar", tool_diagnosticar, "Investiga AGORA a causa de um problema (gateway, internet, DNS, MikroTik/PPPoE/WAN, quedas simultâneas, traceroute) "
+     "e devolve a causa provável. Sem destino: checa a rede toda.", {"destino": S_DEST}, []),
+    ("diagnosticos", tool_diagnosticos, "Quedas e alertas recentes COM a causa encontrada pelo diagnóstico automático (operadora, energia, aparelho, DNS…). "
+     "Use para 'por que caiu', 'o que aconteceu essa noite'.", {"horas": {"type": "integer", "description": "janela em horas, padrão 48"}}, []),
+    ("banda", tool_banda, "Quem está usando a internet AGORA: download/upload por aparelho (MikroTik).", {}, []),
+    ("aparelhos", tool_aparelhos, "Aparelhos da rede (DHCP do MikroTik): total, conectados e os novos dos últimos dias.",
+     {"dias": {"type": "integer", "description": "janela para 'novos', padrão 7"}}, []),
+    ("acao", tool_acao, "PEDE ao usuário a confirmação de uma ação no roteador: reiniciar_pppoe, acordar (Wake-on-LAN), bloquear ou "
+     "desbloquear um aparelho. Não executa: envia botões Sim/Cancelar. Use só quando o usuário pedir a ação.",
+     {"acao": {"type": "string", "enum": ["reiniciar_pppoe", "acordar", "bloquear", "desbloquear"]},
+      "aparelho": {"type": "string", "description": "nome, IP ou MAC do aparelho (não precisa para reiniciar_pppoe)"}}, ["acao"]),
 ]
 _TOOL_FN = {n: f for n, f, *_ in TOOLS}
 
@@ -346,6 +410,8 @@ def _system_prompt():
         "- Texto puro para o Telegram: NADA de markdown (sem **, #, ``` ou tabelas). Use quebras de linha e poucos emojis (✅ ⚠️ ❌ 📶).\n"
         "- Para qualquer dado da rede use as ferramentas. Nunca invente números. Se uma ferramenta der erro, diga qual.\n"
         "- No ping, compare com o histórico de 24h quando houver e diga se está normal, pior ou melhor.\n"
+        "- Para 'por que caiu' ou 'o que aconteceu' use diagnosticos; para investigar um problema agora use diagnosticar.\n"
+        "- Ações no roteador só pela ferramenta acao, que envia botões de confirmação. Nunca diga que executou: diga que mandou o pedido de confirmação.\n"
         "- Latência: até 30 ms ótima, 30–80 ms ok, acima de 100 ms ruim. Perda acima de 1% merece atenção.\n"
         "- Se o pedido não tiver relação com a rede, responda em uma frase que você cuida só do monitoramento."
     )
@@ -557,17 +623,137 @@ def cmd_mk():
     return "\n".join(lines)
 
 
+# ------------------------------------------------------------------ ações com confirmação
+def _kb(token, yes="✅ Sim", no="✖ Cancelar"):
+    return {"inline_keyboard": [[{"text": yes, "callback_data": f"a:{token}:y"}, {"text": no, "callback_data": f"a:{token}:n"}]]}
+
+
+def propose(chat, kind, arg=None, ttl=ACTION_TTL):
+    """Prepara a ação e devolve (texto, teclado). Nada é executado antes do "Sim"."""
+    from netnoc.bot import actions
+    if not get_cfg()["actions"]:
+        return ("🔒 As ações no roteador estão desligadas. Ligue em Configurações → Alertas → Bot e IA → "
+                "\"Permitir ações no roteador\".", None)
+    try:
+        if kind == "pppoe":
+            cl = [c for c in actions.pppoe_clients() if not c["disabled"]]
+            if not cl:
+                return ("Nenhuma conexão PPPoE encontrada no MikroTik.", None)
+            args, desc = {"name": cl[0]["name"]}, f"⚠️ Reiniciar a conexão {cl[0]['name']}?\nA internet cai por uns 10 a 30 segundos."
+        elif kind in ("wake", "block", "unblock"):
+            if not str(arg or "").strip():
+                return ("Diga qual aparelho (nome, IP ou MAC).", None)
+            dev = actions.find_device(arg)
+            label = f"{dev['name']} ({dev.get('ip') or '?'}{', ' + dev['mac'] if dev.get('mac') else ''})"
+            args = {"dev": dev}
+            desc = {"wake": f"⏰ Ligar {label} pela rede (Wake-on-LAN)?",
+                    "block": f"🚫 Bloquear {label}?\nEle fica sem internet e sem acesso aos outros aparelhos até você liberar.",
+                    "unblock": f"✅ Liberar {label}?"}[kind]
+        else:
+            return ("Ação desconhecida.", None)
+    except actions.ActionError as e:
+        return (f"⚠️ {e}", None)
+    token = secrets.token_urlsafe(8)
+    _pending[token] = {"kind": kind, "args": args, "chat": str(chat), "exp": time.time() + ttl, "desc": desc}
+    for k in [k for k, v in _pending.items() if v["exp"] < time.time()]:
+        _pending.pop(k, None)
+    return desc, _kb(token)
+
+
+def execute(p):
+    from netnoc.bot import actions
+    a = p["args"]
+    try:
+        if p["kind"] == "pppoe":
+            r = actions.restart_pppoe(a["name"])
+        elif p["kind"] == "wake":
+            r = actions.wake(a["dev"])
+        elif p["kind"] == "block":
+            r = actions.block(a["dev"])
+        elif p["kind"] == "unblock":
+            r = actions.unblock(a["dev"])
+        else:
+            r = "Ação desconhecida."
+        ok = True
+    except actions.ActionError as e:
+        r, ok = f"⚠️ Não deu: {e}", False
+    except Exception as e:
+        r, ok = f"⚠️ Erro inesperado ({type(e).__name__})", False
+    target = a.get("name") or (a.get("dev") or {}).get("name") or ""
+    db.audit("telegram", "", f"acao:{p['kind']}", f"{target} -> {'ok' if ok else 'falhou'}")
+    monitor.log_event(f"Ação pelo Telegram: {p['kind']} {target} ({'ok' if ok else 'falhou'})", "Info")
+    return r
+
+
+def cmd_banda():
+    from netnoc.bot import actions
+    r = actions.bandwidth_top(3)
+    if not r["devices"]:
+        return "📶 Ninguém usando a internet de forma relevante agora."
+    L = [f"📶 Agora: ↓ {_bps(r['total_down_bps'])} · ↑ {_bps(r['total_up_bps'])}"]
+    L += [f"{i}. {d['name']}: ↓ {_bps(d['down_bps'])} ↑ {_bps(d['up_bps'])}" for i, d in enumerate(r["devices"], 1)]
+    return "\n".join(L)
+
+
+def cmd_aparelhos():
+    from netnoc.bot import actions
+    devs = actions.devices()
+    if not devs:
+        return "Nenhum aparelho conhecido: a lista vem do DHCP do MikroTik."
+    lim = time.time() - 7 * 86400
+    novos = [d for d in devs if (d["first_seen"] or 0) >= lim]
+    L = [f"📱 {sum(1 for d in devs if d['active'])} conectados agora · {len(devs)} conhecidos"]
+    if novos:
+        L += ["", "Novos nos últimos 7 dias:"] + [f"• {d['hostname'] or 'sem nome'} — {d['ip']} ({d['mac']}) desde {_hm(d['first_seen'])}" for d in novos[:12]]
+    return "\n".join(L)
+
+
+def cmd_bloqueados():
+    from netnoc.bot import actions
+    b = actions.blocked()
+    return ("🚫 Bloqueados:\n" + "\n".join(f"• {x['ip']} {x['comment'].replace('NetNOC: ', '')}" for x in b)) if b else "Nenhum aparelho bloqueado."
+
+
+def on_new_devices(devs):
+    """Gancho do monitor: aparelho nunca visto apareceu no DHCP."""
+    cfg = get_cfg()
+    tg = monitor.get_telegram()
+    if not (cfg["new_devices"] and tg.get("bot_token") and tg.get("chat_id")):
+        return
+    for d in devs[:5]:
+        text = (f"📱 Aparelho novo na rede\nNome: {d.get('hostname') or 'sem nome'}\nIP: {d.get('ip') or '?'}\nMAC: {d.get('mac')}\n"
+                f"Visto agora ({_hm(time.time())}).")
+        kb = None
+        if cfg["actions"]:
+            token = secrets.token_urlsafe(8)
+            dev = {"name": d.get("hostname") or d.get("ip"), "ip": d.get("ip"), "mac": d.get("mac")}
+            _pending[token] = {"kind": "block", "args": {"dev": dev}, "chat": str(tg["chat_id"]), "exp": time.time() + NEWDEV_TTL,
+                               "desc": text, "newdev": True}
+            kb = _kb(token, "🚫 Bloquear", "👍 É meu")
+        else:
+            text += "\nSe não conhece, ligue as ações no bot para poder bloquear daqui."
+        _send(tg["bot_token"], tg["chat_id"], text, kb)
+
+
 HELP = ("🤖 Comandos:\n"
         "/status — resumo da rede\n"
         "/ping <destino ou IP> [n] — ping agora\n"
         "/trace <destino ou IP> — traceroute\n"
         "/alertas — incidentes abertos e das últimas 24 h\n"
         "/mk — MikroTik\n"
+        "/diagnostico [destino] — investiga a causa agora\n"
+        "/diario — resumo das últimas 24 h\n"
+        "/banda — quem está usando a internet agora\n"
+        "/aparelhos — aparelhos da rede e os novos\n"
+        "/pppoe — reiniciar a conexão (pede confirmação)\n"
+        "/acordar <aparelho> — liga o PC pela rede\n"
+        "/bloquear <aparelho> · /desbloquear <aparelho> · /bloqueados\n"
         "/limpar — esquece a conversa\n")
 
 
 def handle(text, chat):
-    """Resposta (texto) para uma mensagem do dono do bot."""
+    """Resposta para uma mensagem do dono: texto, ou (texto, teclado) quando pede confirmação."""
+    _ctx.chat = str(chat)
     text = (text or "").strip()
     if not text:
         return None
@@ -590,6 +776,36 @@ def handle(text, chat):
                 return cmd_alertas()
             if c in ("mk", "mikrotik"):
                 return cmd_mk()
+            if c in ("diagnostico", "diag", "diagnóstico"):
+                from netnoc.analise import diagnose
+                names = []
+                if arg.strip():
+                    t = _find_target(arg.strip())
+                    if not t:
+                        return f"Não achei o destino '{arg.strip()}'. Use o nome cadastrado."
+                    names = [t["name"]]
+                if not _rate_ok():
+                    return "⚠️ Limite de testes por minuto atingido, tente em instantes."
+                with diagnose._lock:
+                    d = diagnose.investigate("check", names)
+                return diagnose.format_text(d)
+            if c == "banda":
+                return cmd_banda()
+            if c == "aparelhos":
+                return cmd_aparelhos()
+            if c == "bloqueados":
+                return cmd_bloqueados()
+            if c in ("pppoe", "reconectar"):
+                return propose(chat, "pppoe")
+            if c in ("acordar", "wol", "ligar"):
+                return propose(chat, "wake", arg)
+            if c == "bloquear":
+                return propose(chat, "block", arg)
+            if c in ("desbloquear", "liberar"):
+                return propose(chat, "unblock", arg)
+            if c in ("diario", "diário", "resumo"):
+                from netnoc.analise import story
+                return story.diary(24)
             if c == "limpar":
                 _hist.pop(chat, None)
                 return "Conversa esquecida."
@@ -601,6 +817,8 @@ def handle(text, chat):
     except (ValueError, RuntimeError) as e:
         return f"⚠️ {e}"
     except Exception as e:
+        if type(e).__name__ == "ActionError":
+            return f"⚠️ {e}"
         _err(f"comando: {type(e).__name__}")
         return f"⚠️ Erro interno ({type(e).__name__})."
 
@@ -615,13 +833,46 @@ def _tg(token, method, http_timeout=15, **data):
     return r.status_code, j
 
 
-def _send(token, chat, text):
+def _send(token, chat, text, markup=None):
     text = text or "…"
-    for i in range(0, len(text), 4000):           # limite do Telegram: 4096 por mensagem
+    parts = [text[i:i + 4000] for i in range(0, len(text), 4000)]    # limite do Telegram: 4096 por mensagem
+    for n, part in enumerate(parts):
+        extra = {"reply_markup": json.dumps(markup)} if markup and n == len(parts) - 1 else {}
         try:
-            _tg(token, "sendMessage", chat_id=chat, text=text[i:i + 4000], disable_web_page_preview="true")
+            _tg(token, "sendMessage", chat_id=chat, text=part, disable_web_page_preview="true", **extra)
         except Exception as e:
             _err(f"envio: {type(e).__name__}")
+
+
+def _edit(token, chat, msg_id, text):
+    try:
+        _tg(token, "editMessageText", chat_id=chat, message_id=msg_id, text=text[:4000],
+            reply_markup=json.dumps({"inline_keyboard": []}))
+    except Exception as e:
+        _err(f"edição: {type(e).__name__}")
+
+
+def _callback(token, cq):
+    """Toque num botão Sim/Cancelar."""
+    try:
+        _tg(token, "answerCallbackQuery", http_timeout=5, callback_query_id=cq.get("id"))
+    except Exception:
+        pass
+    msg = cq.get("message") or {}
+    chat, mid = str((msg.get("chat") or {}).get("id", "")), msg.get("message_id")
+    m = re.match(r"^a:([\w-]+):([yn])$", str(cq.get("data") or ""))
+    if not m:
+        return
+    p = _pending.pop(m.group(1), None)
+    orig = (msg.get("text") or "").strip()
+    if not p or p["chat"] != chat or p["exp"] < time.time():
+        _edit(token, chat, mid, orig + "\n\n⌛ Expirou. Peça de novo.")
+        return
+    if m.group(2) == "n":
+        _edit(token, chat, mid, orig + ("\n\n👍 Ok, anotado como seu." if p.get("newdev") else "\n\n✖ Cancelado."))
+        return
+    _edit(token, chat, mid, orig + "\n\n⏳ Executando…")
+    _edit(token, chat, mid, orig + "\n\n" + execute(p))
 
 
 def _process(token, chat, text):
@@ -630,7 +881,11 @@ def _process(token, chat, text):
             _tg(token, "sendChatAction", http_timeout=5, chat_id=chat, action="typing")
         except Exception:
             pass
-        _send(token, chat, handle(text, chat))
+        r = handle(text, chat)
+        if isinstance(r, tuple):
+            _send(token, chat, r[0], r[1])
+        else:
+            _send(token, chat, r)
     except Exception as e:
         _err(f"mensagem: {type(e).__name__}")
 
@@ -646,7 +901,7 @@ def _loop():
             if not (cfg["enabled"] and token and owner):
                 time.sleep(10)
                 continue
-            params = {"timeout": 50, "allowed_updates": json.dumps(["message"])}
+            params = {"timeout": 50, "allowed_updates": json.dumps(["message", "callback_query"])}
             if offset is not None:
                 params["offset"] = offset
             code, j = _tg(token, "getUpdates", http_timeout=65, **params)
@@ -661,6 +916,15 @@ def _loop():
             backoff = 2
             for u in j.get("result") or []:
                 offset = u["update_id"] + 1
+                cq = u.get("callback_query")
+                if cq:
+                    cchat = str(((cq.get("message") or {}).get("chat") or {}).get("id", ""))
+                    if cchat == owner and str((cq.get("from") or {}).get("id", "")) and cchat:
+                        _state["last_msg_ts"] = time.time()
+                        _pool.submit(_callback, token, cq)
+                    else:
+                        _state["ignored"] += 1
+                    continue
                 msg = u.get("message") or {}
                 chat = str((msg.get("chat") or {}).get("id", ""))
                 if chat != owner:
@@ -681,6 +945,8 @@ def start(api):
     """api: funções do main.py (overview, targets, incidents, series, uptime, mikrotik_status,
     mikrotik_ifaces, dns, speedtests, system). Inicia o leitor do Telegram em segundo plano."""
     _api.update(api)
+    if on_new_devices not in monitor.NEW_DEVICE_HOOKS:
+        monitor.NEW_DEVICE_HOOKS.append(on_new_devices)
     if not _state.get("thread"):
         th = threading.Thread(target=_loop, name="aibot", daemon=True)
         _state["thread"] = True

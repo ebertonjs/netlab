@@ -2,7 +2,7 @@
 import base64, hashlib, hmac, ipaddress, json, os, re, secrets, threading, time
 from typing import Optional
 
-import db
+from netnoc.nucleo import db
 
 MASK = "•" * 8
 ENC_PREFIX = "enc:v1:"

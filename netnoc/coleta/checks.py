@@ -1,11 +1,11 @@
 """Checks além de ICMP: TCP, HTTP(S), validade de certificado, traceroute, v4 vs v6, descoberta."""
-import ipaddress, re, shutil, socket, ssl, subprocess, threading, time, uuid
+import ipaddress, platform, re, shutil, socket, ssl, subprocess, threading, time, uuid
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
 import requests
 
-import security
+from netnoc.nucleo import security
 
 try:                                    # silencia o aviso quando verify_ssl=false foi escolhido
     import urllib3
@@ -113,6 +113,29 @@ def traceroute(host, max_hops=20):
                      "ip": ip.group(1) if ip and "*" not in rest.split()[0] else None,
                      "ms": float(ms.group(1)) if ms else None})
     return hops
+
+
+def ping_many(host, n=5, interval=0.3, timeout_s=1):
+    """n pings ICMP pelo `ping` do sistema (sem root). Lista de ms, None = perdido."""
+    if not security.valid_host(host):
+        raise ValueError("Host inválido")
+    n = max(1, min(int(n), 20))
+    if platform.system().lower().startswith("win"):
+        cmd = ["ping", "-n", str(n), "-w", str(int(timeout_s * 1000)), host]
+    else:
+        cmd = ["ping", "-n", "-c", str(n), "-i", str(interval), "-W", str(timeout_s), host]
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=n * (interval + timeout_s) + 5)
+        out = p.stdout
+        if p.returncode == 2 and not out and "-i" in cmd:          # ping sem suporte a -i (ex.: busybox antigo)
+            cmd = [c for i, c in enumerate(cmd) if c != "-i" and (i == 0 or cmd[i - 1] != "-i")]
+            out = subprocess.run(cmd, capture_output=True, text=True, timeout=n * (1 + timeout_s) + 5).stdout
+    except subprocess.TimeoutExpired:
+        return [None] * n
+    except FileNotFoundError:
+        raise RuntimeError("comando ping não encontrado no servidor")
+    got = [float(x) for x in re.findall(r"time[=<]([\d.]+)", out)]
+    return (got + [None] * n)[:n]
 
 
 def compare_ip_versions(host, samples=4):

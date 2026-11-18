@@ -12,15 +12,16 @@ from collections import deque
 import requests
 from requests.auth import HTTPBasicAuth, HTTPDigestAuth
 
-import db
-import security
+from netnoc.nucleo import db
+from netnoc.nucleo import security
 
 SECRET = ("password",)
 DEFAULTS = {"enabled": False, "host": "", "http_port": 80, "rtsp_port": 554, "use_https": False,
             "username": "", "password": "", "channels": 4, "events": True, "rtsp_template": "", "names": {}}
 DEFAULT_TEMPLATE = "rtsp://{user}:{password}@{host}:{rtsp_port}/cam/realmonitor?channel={ch}&subtype={sub}"
 GO2RTC_ADDR = os.environ.get("NETNOC_GO2RTC_ADDR", "127.0.0.1:1984")
-BASE = os.path.dirname(os.path.abspath(__file__))
+# raiz do projeto (bin/go2rtc e go2rtc.yaml ficam lá, ao lado do config.json)
+BASE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CONF_PATH = os.environ.get("NETNOC_GO2RTC_CONF", os.path.join(BASE, "go2rtc.yaml"))
 SNAP_EVERY = 600                 # "última imagem" de cada canal a cada 10 min
 SRC_RE = re.compile(r"^ch(\d{1,2})(_hd)?$")
@@ -280,7 +281,7 @@ def _snap_once():
     cfg = get_cfg()
     if not cfg["enabled"] or not cfg["host"]:
         return
-    import monitor
+    from netnoc.coleta import monitor
     for ch in range(1, cfg["channels"] + 1):
         if ("camera", channel_name(cfg, ch)) in monitor._active_incidents:
             continue                       # sem vídeo agora: mantém a última imagem boa
@@ -305,14 +306,14 @@ def _send_photo_async(ch, name, severity):
     lg = last_good(ch)
     if not lg:
         return
-    import monitor
+    from netnoc.coleta import monitor
     ts, data = lg
     cap = f"📷 {name}: última imagem antes da queda ({time.strftime('%H:%M', time.localtime(ts))})"
     threading.Thread(target=monitor.send_telegram_photo, args=(data, cap, severity, name), daemon=True).start()
 
 
 def _handle(code, action, index, cfg):
-    import monitor
+    from netnoc.coleta import monitor
     start = action.lower() == "start"
     if code == "VideoLoss":
         ch = index + 1
@@ -337,7 +338,7 @@ def _handle(code, action, index, cfg):
 
 def _reconcile_video_loss(cfg):
     """Ao (re)conectar: o DVR não repete eventos antigos, então pergunta quem está sem vídeo agora."""
-    import monitor
+    from netnoc.coleta import monitor
     lost = set()
     try:
         txt = _get(cfg, "/cgi-bin/eventManager.cgi?action=getEventIndexes&code=VideoLoss").content.decode("utf-8", "replace")
@@ -502,7 +503,7 @@ def viewers():
 
 
 def status():
-    import monitor
+    from netnoc.coleta import monitor
     cfg = get_cfg()
     chans = []
     for ch in range(1, cfg["channels"] + 1):
@@ -546,7 +547,7 @@ def start():
     if _started:
         return
     _started = True
-    import monitor
+    from netnoc.coleta import monitor
     for name, once, iv, delay in (("go2rtc", go2rtc_once, lambda: 5, 1), ("cameras_foto", _snap_once, lambda: SNAP_EVERY, 20)):
         threading.Thread(target=monitor._loop, args=(name, once, iv, delay), daemon=True, name=name).start()
     threading.Thread(target=events_worker, daemon=True, name="dvr-eventos").start()

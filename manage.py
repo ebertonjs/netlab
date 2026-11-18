@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Utilitário de administração: python manage.py reset-admin | set-password <usuario> [senha]"""
 import getpass, secrets, sys
-import db, security
+from netnoc.nucleo import db
+from netnoc.nucleo import security
 
 def main():
     if len(sys.argv) < 2:

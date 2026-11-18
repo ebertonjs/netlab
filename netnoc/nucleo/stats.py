@@ -1,6 +1,6 @@
 """Agregações: rollups (5 min / 1 h) e consultas unificadas sobre raw + 5m + 1h."""
 import time, threading
-import db
+from netnoc.nucleo import db
 
 _ttl = {}
 _tlock = threading.Lock()

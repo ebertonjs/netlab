@@ -2,8 +2,8 @@
 import json, os, re, shutil, subprocess, tempfile, threading, time, uuid
 from typing import Optional
 
-import db
-import security
+from netnoc.nucleo import db
+from netnoc.nucleo import security
 
 SECRET_FIELDS = ("community", "auth_pass", "priv_pass")
 OID_RE = re.compile(r"^\.?\d+(\.\d+)*$")

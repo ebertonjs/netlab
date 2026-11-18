@@ -1,8 +1,8 @@
 """Multi-site: agentes remotos enviam pings 'alvo@site'; aqui ingerimos e comparamos as visões."""
 import json, time
-import db
-import monitor
-import security
+from netnoc.nucleo import db
+from netnoc.coleta import monitor
+from netnoc.nucleo import security
 
 TOKEN_KEY = "agent_token_hash"
 _last_seen = {}

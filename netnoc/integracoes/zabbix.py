@@ -1,8 +1,8 @@
 """Integração somente-leitura com a API JSON-RPC do Zabbix (token de API, Bearer)."""
 import json, time
 import requests
-import db
-import security
+from netnoc.nucleo import db
+from netnoc.nucleo import security
 
 SECRET = ("token",)
 DEFAULTS = {"enabled": False, "url": "", "token": "", "verify_ssl": True, "min_severity": 2, "limit": 50}

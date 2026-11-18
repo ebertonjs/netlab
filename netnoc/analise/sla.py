@@ -1,8 +1,8 @@
 """SLA: disponibilidade, MTTR/MTBF por alvo, exportação CSV."""
 import csv, io, time, datetime
-import db
-import stats
-import monitor
+from netnoc.nucleo import db
+from netnoc.nucleo import stats
+from netnoc.coleta import monitor
 
 
 def period_bounds(month=None, days=30):

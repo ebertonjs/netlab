@@ -14,6 +14,76 @@
   const since = ts => ts ? dur(Date.now() / 1000 - ts) : '--';
   const WDS = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
 
+  // ------------------------------------------------------------------ 0. a rede contada (linha do tempo narrativa)
+  const openEp = new Set();
+  let diagBox = null;
+  const LV = {bad: 'red', warn: 'yellow', info: 'blue', ok: 'green'};
+  function when(ts) {
+    const d = new Date(ts * 1000), t = new Date();
+    const y = new Date(t); y.setDate(t.getDate() - 1);
+    const p = n => String(n).padStart(2, '0');
+    const hhmm = p(d.getHours()) + ':' + p(d.getMinutes());
+    if (d.toDateString() === t.toDateString()) return hhmm;
+    if (d.toDateString() === y.toDateString()) return 'ontem ' + hhmm;
+    return p(d.getDate()) + '/' + p(d.getMonth() + 1) + ' ' + hhmm;
+  }
+  function evList(ev, tips) {
+    const box = h('div', {class: 'st-ev'});
+    for (const e of ev || []) box.append(h('div', {class: 'e ' + (e.ok === true ? 'ok' : e.ok === false ? 'bad' : '')}, h('i'), h('span', {text: e.txt})));
+    if (tips && tips.length) box.append(h('div', {class: 'tips'}, ...tips.map(t => h('div', {text: '→ ' + t}))));
+    return box;
+  }
+  async function runDiag(btn) {
+    btn.disabled = true; btn.lastChild.textContent = ' Investigando…';
+    diagBox = {loading: true}; render();
+    try { diagBox = await window.NN.post('/api/diagnose', {}); } catch (e) { diagBox = {error: e.message}; }
+    btn.disabled = false; render();
+  }
+  function renderStory(el) {
+    const S = D.story;
+    if (!S) { el.hidden = true; return; }
+    el.classList.add('st-' + S.state);
+    const btn = h('button', {class: 'tbtn st-btn', type: 'button', title: 'Gateway, internet, DNS, MikroTik e traceroute agora'}, ICON('search'), ' Diagnosticar agora');
+    btn.onclick = () => runDiag(btn);
+    el.append(h('div', {class: 'st-head'},
+      h('span', {class: 'st-dot ' + (LV[S.state] || '')}),
+      h('div', {class: 'st-txt'}, h('div', {class: 'st-h', text: S.headline}), h('div', {class: 'st-s', text: S.sub}),
+        h('div', {class: 'st-d', text: S.day})),
+      btn));
+    if (diagBox) {
+      const d = diagBox;
+      const b = h('div', {class: 'st-diag'});
+      if (d.loading) b.append(h('div', {class: 'hint', text: 'Pingando gateway e internet, testando DNS, consultando o MikroTik…'}));
+      else if (d.error) b.append(h('div', {class: 'callout', text: d.error}));
+      else b.append(h('div', {class: 'st-dt'}, h('b', {text: d.title}), h('span', {class: 'conf', text: 'confiança ' + d.confidence + ' · ' + d.secs + ' s'}),
+        h('button', {class: 'st-x', type: 'button', title: 'Fechar', trusted: ICO('x'), onclick: () => { diagBox = null; render(); }})),
+      d.text ? h('p', {text: d.text}) : null, evList(d.evidence, d.tips));
+      el.append(b);
+    }
+    if (S.insights && S.insights.length) el.append(h('div', {class: 'st-ins'}, ...S.insights.map(t => h('span', {}, ICON('clock'), t))));
+    const tl = h('div', {class: 'st-tl'});
+    for (const e of S.episodes || []) {
+      const key = e.diag_id ? 'd' + e.diag_id : 'i' + e.start + e.title;
+      const isOpen = openEp.has(key);
+      const row = h('div', {class: 'st-ep ' + e.level + (e.open ? ' live' : '') + (isOpen ? ' open' : ''),
+        onclick: () => { isOpen ? openEp.delete(key) : openEp.add(key); render(); }},
+      h('div', {class: 'st-when'}, h('b', {text: when(e.start)}), h('span', {text: e.open ? 'há ' + dur(e.duration_s) : dur(e.duration_s)})),
+      h('i', {class: 'st-pin'}),
+      h('div', {class: 'st-body'}, h('div', {class: 'st-t', text: e.title}),
+        e.cause ? h('div', {class: 'st-c'}, ICON('search'), e.cause)
+          : e.pending ? h('div', {class: 'st-c none'}, ICON('search'), 'investigando a causa…')
+            : (e.kind === 'gap' ? null : h('div', {class: 'st-c none', text: 'sem diagnóstico'})),
+        isOpen && e.text ? h('p', {text: e.text}) : null,
+        isOpen && e.evidence ? evList(e.evidence, e.tips) : null,
+        isOpen && e.kind !== 'gap' ? h('button', {class: 'tbtn st-map', type: 'button', onclick: ev => { ev.stopPropagation();
+          openSheet('topology', {view: 'mapa', at: Math.round(e.start + 45)}); }}, ICON('map'), ' Ver o mapa nesse momento') : null));
+      tl.append(row);
+    }
+    if (!tl.children.length) tl.append(h('div', {class: 'st-empty', text: 'Nada aconteceu nas últimas 48 horas.'}));
+    else if (S.total > S.episodes.length) tl.append(h('div', {class: 'hint', text: `+ ${S.total - S.episodes.length} anteriores em Incidentes`}));
+    el.append(tl);
+  }
+
   // ------------------------------------------------------------------ 1. indicadores
   function kpi(orb, icon, label, value, sub, opts) {
     opts = opts || {};
@@ -215,6 +285,7 @@
     const keep = root.querySelector('.hx-cams');           // não recarrega as fotos a cada atualização
     const keepPanel = keep && keep.closest('.hx-p');
     clear(root);
+    root.append(panel('hx-story', renderStory));
     const k = h('div', {class: 'hx-kpis'}); renderKpis(k); root.append(k);
     const row = h('div', {class: 'hx-row' + (D.net ? '' : ' one')});
     row.append(panel('hx-avail', renderAvail));

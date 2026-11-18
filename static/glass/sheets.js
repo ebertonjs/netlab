@@ -642,17 +642,79 @@
     const [L, R] = panels(ctx);
     const host = h('div', {class: 'tm-host'});
     const kp = h('div', {class: 'tm-kpis'});
+    const tb = h('div', {class: 'tmc'});
     R.classList.add('topo-map');
-    R.append(kp, host);
+    R.append(kp, tb, host);
     let m = null, drawnSig = '', drawnAt = 0;
+    // ---- máquina do tempo: at = null -> ao vivo
+    let at = ctx.params.at ? +ctx.params.at : null, span = ctx.params.span || (at && Date.now() / 1000 - at > 86400 ? 168 : 24);
+    let TM = null, playT = null, fetchT = null;
+    const p2 = n => String(n).padStart(2, '0');
+    const fmtAt = ts => {
+      const d = new Date(ts * 1000), t = new Date(), y = new Date(t); y.setDate(t.getDate() - 1);
+      const hh = p2(d.getHours()) + ':' + p2(d.getMinutes());
+      return d.toDateString() === t.toDateString() ? 'hoje ' + hh : d.toDateString() === y.toDateString() ? 'ontem ' + hh : p2(d.getDate()) + '/' + p2(d.getMonth() + 1) + ' ' + hh;
+    };
+    const live = h('button', {type: 'button', class: 'tmc-live'}, h('i'), 'Ao vivo');
+    const rng = h('input', {type: 'range', class: 'tmc-rng', step: '60', 'aria-label': 'Momento exibido no mapa'});
+    const marks = h('div', {class: 'tmc-marks'});
+    const lab = h('div', {class: 'tmc-lab'}, h('b'), h('span'));
+    const playB = h('button', {type: 'button', class: 'tmc-b', title: 'Reproduzir', trusted: ICO('play')});
+    const backB = h('button', {type: 'button', class: 'tmc-b', title: 'Voltar', trusted: ICO('left')});
+    const fwdB = h('button', {type: 'button', class: 'tmc-b', title: 'Avançar', trusted: ICO('chevron')});
+    const spanSeg = h('div', {class: 'tmc-span'});
+    tb.append(live, h('div', {class: 'tmc-mid'}, h('div', {class: 'tmc-track'}, marks, rng)), lab, h('div', {class: 'tmc-ctl'}, backB, playB, fwdB), spanSeg);
+    const stepS = () => span * 3600 / 120;
+    function syncBar() {
+      const now = Date.now() / 1000, from = TM ? Math.max(TM.first, now - span * 3600) : now - span * 3600;
+      rng.min = String(Math.floor(from)); rng.max = String(Math.ceil(now));
+      rng.value = String(at == null ? now : Math.max(from, at));
+      live.classList.toggle('on', at == null);
+      tb.classList.toggle('hist', at != null);
+      lab.firstChild.textContent = at == null ? 'Agora' : fmtAt(at);
+      lab.lastChild.textContent = at == null ? 'ao vivo' : 'há ' + dur(now - at);
+      playB.innerHTML = ICO(playT ? 'pause' : 'play');
+      clear(marks);
+      for (const e of (TM && TM.marks) || []) {
+        const a = Math.max(from, e.start), b = Math.min(now, e.end || now);
+        if (b < from) continue;
+        const mk = h('i', {class: e.level, title: `${fmtAt(e.start)} · ${e.title}${e.cause ? ' — ' + e.cause : ''}`});
+        mk.style.left = (100 * (a - from) / (now - from)) + '%';
+        mk.style.width = Math.max(.6, 100 * (b - a) / (now - from)) + '%';
+        mk.onclick = () => { stopPlay(); at = e.start + 30; syncBar(); load(); };
+        marks.append(mk);
+      }
+      clear(spanSeg).append(...[[6, '6 h'], [24, '24 h'], [168, '7 dias']].map(([v, t]) =>
+        h('button', {type: 'button', class: span === v ? 'on' : '', text: t, onclick: async () => { span = v; await loadTM(); syncBar(); }})));
+    }
+    async function loadTM() { try { TM = await api('/api/timemachine?hours=' + span); } catch (_) { TM = null; } }
+    function goto(ts) {
+      const now = Date.now() / 1000;
+      at = ts >= now - 30 ? null : ts;
+      syncBar();
+      clearTimeout(fetchT); fetchT = setTimeout(load, 180);
+    }
+    function stopPlay() { clearInterval(playT); playT = null; syncBar(); }
+    rng.addEventListener('input', () => { stopPlay(); goto(+rng.value); });
+    live.onclick = () => { stopPlay(); at = null; syncBar(); load(); };
+    backB.onclick = () => { stopPlay(); goto((at == null ? Date.now() / 1000 : at) - stepS()); };
+    fwdB.onclick = () => { stopPlay(); if (at != null) goto(at + stepS()); };
+    playB.onclick = () => {
+      if (playT) return stopPlay();
+      if (at == null) at = Date.now() / 1000 - span * 3600;
+      playT = setInterval(() => { goto(at + stepS()); if (at == null) stopPlay(); }, 700);
+      syncBar();
+    };
+    ctx.cleanups.push(() => { clearInterval(playT); clearTimeout(fetchT); });
     const kpi = (orb, icon, l, v, sub) => h('div', {class: 'tm-kpi'}, h('span', {class: 'orb ' + orb, trusted: ICO(icon)}),
       h('span', {style: {minWidth: 0}}, h('span', {class: 'l', text: l}), h('span', {class: 'v', text: String(v)}), h('span', {class: 's', text: sub})));
     async function load() {
-      const D = await api('/api/topomap');
-      if (!ctx.alive) return;
+      const want = at;
+      const D = await api('/api/topomap' + (want != null ? '?at=' + Math.round(want) : ''));
+      if (!ctx.alive || want !== at) return;          // o usuário já arrastou para outro momento
       const s = D.summary;
       clear(kp).append(
-        kpi('green', 'check', 'Destinos online', `${s.ok + s.warn}/${s.total}`, s.total ? 'respondendo agora' : 'nenhum destino'),
+        kpi('green', 'check', 'Destinos online', `${s.ok + s.warn}/${s.total}`, !s.total ? 'nenhum destino' : D.at ? 'naquele momento' : 'respondendo agora'),
         kpi(s.bad ? 'red' : 'green', s.bad ? 'x' : 'check', 'Fora do ar', s.bad, s.bad ? 'causa raiz' : 'nenhum problema'),
         kpi(s.warn ? '' : 'green', 'alert', 'Avisos', s.warn, 'lento ou com perda'),
         kpi(s.iso ? 'grey' : 'blue', 'network', 'Isolados', s.iso, 'atrás de um equipamento caído'));
@@ -672,16 +734,18 @@
         lg.append(h('div', {}, h('i', {style: {background: c}}), h('b', {text: String(s[k] || 0)}), h('span', {text: t})));
       }
       L.append(lg, h('div', {class: 'rule'}));
-      L.append(h('h4', {class: 'side-h', text: 'Problemas agora'}));
-      const act_ = NN.S.active || [];
+      L.append(h('h4', {class: 'side-h', text: D.at ? 'Problemas em ' + fmtAt(D.at) : 'Problemas agora'}));
+      const act_ = D.at ? D.incidents : (NN.S.active || []);
       if (!act_.length) L.append(h('div', {class: 'hint', style: {color: 'var(--green)'}, text: 'Nenhum problema ✓'}));
       const pl = h('div', {class: 'list'});
-      for (const i of act_.slice(0, 6)) pl.append(li(sevClass(i.severity), i.target, i.message, hm(i.started_ts), () => openSheet('incidents')));
+      for (const i of act_.slice(0, 6)) pl.append(li(sevClass(i.severity), i.target, i.cause ? i.message + ' — ' + i.cause : i.message, hm(i.started_ts), () => openSheet('incidents')));
       L.append(pl, h('div', {class: 'rule'}));
       L.append(h('div', {class: 'hint', text: 'Agrupe os destinos abrindo um card → "Grupo no mapa" (ex.: Servidores, Wi-Fi, Câmeras). Sem grupo: os de internet vão para "Internet", os locais para "Rede local", e quem tem dependentes ganha caixa própria. As ligações seguem o "Depende de".'}));
     }
+    await loadTM(); syncBar();
     await load();
-    ctx.every(10000, load);
+    ctx.every(10000, () => { if (at == null) load(); syncBar(); });
+    ctx.every(60000, async () => { await loadTM(); syncBar(); });
     ctx.cleanups.push(() => { if (m) m.destroy(); });
   }
 
@@ -1192,6 +1256,10 @@
           const qKey = inp({type: 'password', value: ab.groq_key, autocomplete: 'off', placeholder: 'gsk_…'});
           const qMod = inp({value: ab.groq_model, placeholder: 'openai/gpt-oss-120b', list: 'aiGroqModels'});
           const [anyEl, anyH] = sw('Permitir ping e traceroute para qualquer IP ou site (não só os destinos)', ab.any_host);
+          const [dyEl, dyH] = sw('Diário da rede no Telegram todo dia', ab.diary);
+          const [ndEl, ndH] = sw('Avisar quando um aparelho novo entrar na rede (DHCP do MikroTik)', ab.new_devices);
+          const [acEl, acH] = sw('Permitir ações no roteador pelo Telegram (sempre com botão de confirmação)', ab.actions);
+          const dyT = inp({type: 'time', value: ab.diary_time || '07:00', style: {maxWidth: '140px'}});
           const gBox = h('div', {class: 'form'}, h('div', {class: 'row2'}, field('Chave do Gemini', gKey), field('Modelo', gMod)),
             h('datalist', {id: 'aiGemModels'}, ...['gemini-3.5-flash-lite', 'gemini-3.8-flash'].map(v => h('option', {value: v}))),
             h('div', {class: 'hint'}, 'Chave grátis em ', h('a', {href: 'https://aistudio.google.com/apikey', target: '_blank', rel: 'noopener', text: 'aistudio.google.com/apikey'}),
@@ -1218,13 +1286,23 @@
           R.append(sec('bolt', 'Bot e IA no Telegram',
             ab.telegram_ready ? null : h('div', {class: 'callout', text: 'Preencha o token do bot e o Chat ID acima: o bot só conversa com esse chat.'}),
             h('div', {class: 'form'}, bSwEl,
-              h('div', {class: 'hint', text: 'Comandos que funcionam sempre: /status, /ping <destino ou IP>, /trace <destino>, /alertas, /mk. Com uma IA ativa, dá para perguntar em português: "a internet caiu essa noite?", "como está o ping pro Cloudflare?".'}),
-              field('IA', prov), gBox, qBox, anyEl, stLine,
+              h('div', {class: 'hint', text: 'Comandos: /status, /ping <destino ou IP>, /trace <destino>, /diagnostico [destino], /diario, /banda, /aparelhos, /alertas, /mk. Com uma IA ativa, dá para perguntar em português: "a internet caiu essa noite?", "como está o ping pro Cloudflare?".'}),
+              field('IA', prov), gBox, qBox, anyEl,
+              h('div', {style: {display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap'}}, dyEl, dyT,
+                tbtn('Ver diário agora', 'file', async () => {
+                  out.hidden = false; out.textContent = 'Montando…';
+                  const r = await act(() => post('/api/diary/test'));
+                  out.textContent = r ? r.text : 'Falhou.';
+                })),
+              h('div', {class: 'hint', text: 'Resumo das últimas 24 h com as quedas e a causa de cada uma. Também pelo comando /diario.'}),
+              ndEl, acEl,
+              h('div', {class: 'hint', text: 'Ações: /pppoe (reinicia a conexão), /acordar <PC> (Wake-on-LAN), /bloquear e /desbloquear <aparelho>. Nada acontece sem você tocar em "Sim". Precisa de um usuário do MikroTik com permissão de escrita; o bloqueio cria uma regra "NetNOC" no firewall. /banda e /aparelhos funcionam sempre.'}),
+              stLine,
               h('div', {style: {display: 'flex', gap: '8px'}},
                 tbtn('Salvar', 'check', async () => {
                   if (needAdmin()) return;
                   if (await act(() => post('/api/settings/aibot', {enabled: bEn.checked, provider: prov.value, gemini_key: gKey.value, gemini_model: gMod.value.trim(),
-                    groq_key: qKey.value, groq_model: qMod.value.trim(), any_host: anyH.checked}), 'Bot salvo')) ctx.reopen();
+                    groq_key: qKey.value, groq_model: qMod.value.trim(), any_host: anyH.checked, diary: dyH.checked, diary_time: dyT.value || '07:00', actions: acH.checked, new_devices: ndH.checked}), 'Bot salvo')) ctx.reopen();
                 }, 'primary')),
               h('div', {class: 'hint', text: 'Teste aqui sem o celular (salve antes):'}),
               h('div', {style: {display: 'flex', gap: '8px'}}, q, tbtn('Perguntar', 'play', ask)), out)));

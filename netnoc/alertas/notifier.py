@@ -5,8 +5,8 @@ from typing import Optional
 
 import requests
 
-import db
-import security
+from netnoc.nucleo import db
+from netnoc.nucleo import security
 
 SEV = {"Alta": 3, "Media": 2, "Baixa": 1, "Info": 0}
 
@@ -31,7 +31,7 @@ _DEFAULTS = {
 
 def _app():
     try:
-        import monitor
+        from netnoc.coleta import monitor
         return monitor.get_app_name()
     except Exception:
         return "NetNOC"
@@ -180,7 +180,7 @@ def _send_email(cfg, sev, text, target):
 
 
 def _telegram(text):
-    import monitor
+    from netnoc.coleta import monitor
     if not monitor.send_telegram(text):
         raise RuntimeError("Telegram: " + (monitor.telegram_last_error() or "falha no envio"))
     return True
@@ -226,7 +226,7 @@ def _worker():
         sev, text, target, kind = _q.get()
         try:
             cfg = get_config()
-            import monitor
+            from netnoc.coleta import monitor
             tg = monitor.get_telegram()
             for ch in CHANNELS:
                 enabled = tg["enabled"] if ch == "telegram" else cfg[ch]["enabled"]

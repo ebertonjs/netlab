@@ -6,9 +6,9 @@ from typing import Optional
 import requests
 import psutil
 
-import db
-import security
-import stats
+from netnoc.nucleo import db
+from netnoc.nucleo import security
+from netnoc.nucleo import stats
 
 CFG = json.load(open("config.json", encoding="utf-8"))
 THRESH = CFG["thresholds"]
@@ -40,6 +40,8 @@ _started_at = time.time()
 _ingest_last_id = None    # último id de pings já lido (coletor externo)
 _targets_cache = None
 _intervals_cache = None
+INCIDENT_HOOKS = []       # funções (tipo, alvo, id, severidade) chamadas quando um incidente abre (ex.: diagnóstico)
+NEW_DEVICE_HOOKS = []     # funções ([{mac, ip, hostname}]) chamadas quando aparece um MAC nunca visto no DHCP
 
 
 # ------------------------------------------------------------------ settings
@@ -184,7 +186,7 @@ def send_telegram_photo(jpeg, caption, severity="Alta", target=None):
     if _SEVERITY_ORDER.get(severity, 0) < _SEVERITY_ORDER.get(cfg["min_severity"], 3):
         return False
     try:
-        import notifier
+        from netnoc.alertas import notifier
         if target and notifier.in_maintenance(target):
             return False
     except Exception:
@@ -201,7 +203,7 @@ def send_telegram_photo(jpeg, caption, severity="Alta", target=None):
 def notify(severity, text, kind="incident", target=None):
     """Ponto único de saída de alertas (o módulo notifier, se presente, assume)."""
     try:
-        import notifier
+        from netnoc.alertas import notifier
         return notifier.dispatch(severity, text, kind, target)
     except ImportError:
         cfg = get_telegram()
@@ -386,12 +388,16 @@ def sync_dhcp_leases():
         leases = fetch_dhcp_leases()
     except Exception:
         return []
-    seen = []
+    seen, new = [], []
+    known = {r["mac"] for r in db.query_w("SELECT mac FROM dhcp_hosts")}
     for lease in leases:
         mac = lease.get("mac-address")
         if not mac:
             continue
         seen.append(mac)
+        if known and mac not in known:            # na primeira sincronização tudo é "novo": não avisa
+            new.append({"mac": mac, "ip": str(lease.get("address", ""))[:64],
+                        "hostname": security.clean_name(lease.get("host-name", ""), 60)})
         ip = str(lease.get("address", ""))[:64]
         hostname = security.clean_name(lease.get("host-name", ""), 60)
         active = 1 if lease.get("status") == "bound" else 0
@@ -401,6 +407,14 @@ def sync_dhcp_leases():
             (mac, ip, hostname, active, now, now))
     if seen:
         db.execute(f"UPDATE dhcp_hosts SET active=0 WHERE mac NOT IN ({','.join('?' * len(seen))})", tuple(seen))
+    if new:
+        for d in new:
+            log_event(f"Aparelho novo na rede: {d['hostname'] or 'sem nome'} ({d['ip']}, {d['mac']})", "Baixa")
+        for fn in NEW_DEVICE_HOOKS:
+            try:
+                fn(new)
+            except Exception:
+                pass
     return leases
 
 
@@ -687,7 +701,7 @@ def reconcile_incidents():
     targets = {t["name"] for t in get_targets()}
     dns = {s["name"] for s in get_dns_servers()}
     try:
-        import snmp
+        from netnoc.coleta import snmp
         devs = {d["name"] for d in snmp.get_devices()}
     except Exception:
         devs = set()
@@ -732,6 +746,11 @@ def raise_incident(itype, target, message, severity):
         _active_incidents[key] = {"id": iid, "severity": severity, "started_ts": started_ts}
     log_event(message, severity)
     notify(severity, f"🚨 {get_app_name()} [{severity}]\n{message}", "incident", target)
+    for fn in INCIDENT_HOOKS:
+        try:
+            fn(itype, target, iid, severity)
+        except Exception:
+            pass
 
 
 def resolve_incident(itype, target, message="Resolvido"):
@@ -792,7 +811,7 @@ def probe_target(t):
     ttype = t.get("type", "icmp")
     if ttype != "icmp":
         try:
-            import checks
+            from netnoc.coleta import checks
             return checks.probe(t)
         except ImportError:
             return None
@@ -1302,7 +1321,7 @@ def system_once():
 
 def cert_once():
     """Verifica a validade dos certificados dos alvos https (a cada 6 h)."""
-    import checks
+    from netnoc.coleta import checks
     warn, crit = int(CFG.get("cert_warn_days", 14)), int(CFG.get("cert_crit_days", 3))
     for t in get_targets():
         if t.get("type") != "http" or not t["host"].startswith("https://"):
@@ -1322,7 +1341,7 @@ _snmp_due = {}
 
 
 def snmp_once():
-    import snmp
+    from netnoc.coleta import snmp
     for dev in snmp.get_devices():
         n = dev["name"]
         if _snmp_due.get(n, 0) > time.time():
@@ -1342,7 +1361,7 @@ def snmp_once():
 
 
 def sites_once():
-    import sites
+    from netnoc.coleta import sites
     sites.watchdog()
 
 
@@ -1350,7 +1369,7 @@ def prune_once():
     stats.run_rollups()          # nunca apagar bruto antes de agregar
     db.prune_old(CFG["history_retention_days"], RAW_DAYS, H1_DAYS)
     try:
-        import snmp
+        from netnoc.coleta import snmp
         snmp.prune(CFG["history_retention_days"])
     except Exception:
         pass

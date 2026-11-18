@@ -1,14 +1,14 @@
 """Backup/restauração da configuração (JSON). Segredos NUNCA saem no export; na restauração
 são mantidos os atuais quando o destino (host/url/usuário) não mudou, senão ficam em branco."""
 import json, time
-import db
-import dvr
-import monitor
-import notifier
-import security
-import snmp
-import zabbix
-import aibot
+from netnoc.nucleo import db
+from netnoc.integracoes import dvr
+from netnoc.coleta import monitor
+from netnoc.alertas import notifier
+from netnoc.nucleo import security
+from netnoc.coleta import snmp
+from netnoc.integracoes import zabbix
+from netnoc.bot import aibot
 
 FORMAT = "netnoc-backup"
 VERSION = 2
