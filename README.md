@@ -5,8 +5,8 @@ Painel de monitoramento de rede **self-hosted** (na interface ele se chama **Net
 ![Python](https://img.shields.io/badge/Python-3.9%2B-blue)
 ![FastAPI](https://img.shields.io/badge/FastAPI-backend-009688)
 ![SQLite](https://img.shields.io/badge/SQLite-embutido-003b57)
-![Versão](https://img.shields.io/badge/vers%C3%A3o-3.9-3b82f6)
-![License](https://img.shields.io/badge/license-MIT-green)
+![Versão](https://img.shields.io/badge/vers%C3%A3o-3.10-3b82f6)
+![Licença](https://img.shields.io/badge/licen%C3%A7a-uso%20gratuito-orange)
 
 ![NetLAB — tema Pro escuro](docs/img/pro-escuro.jpg)
 
@@ -21,7 +21,8 @@ Painel de monitoramento de rede **self-hosted** (na interface ele se chama **Net
 - **6 temas que mudam a interface inteira** (o padrão é o **Pro**, um console de operações escuro/claro), escolhidos por aparelho, com tamanho ajustável (Normal / Compacta / Mínima)
 - **Página inicial completa**: indicadores (disponibilidade hoje/7 d/30 d, IP público, último speedtest, tempo sem quedas), disponibilidade de cada destino em blocos de 30 min, portas do MikroTik, aparelhos novos na rede, fotos das câmeras, AdGuard, DNS e saúde do servidor
 - **Mapa da rede em caixas**, estilo NOC: grupos de equipamentos ligados por linhas com pacotes animados, causa raiz em vermelho e dependentes como "isolados"
-- **Modo TV** com rodízio de cenas: visão geral, mapa da rede, equipamentos, últimas 24 h e câmeras
+- **Bot no Telegram** com IA opcional (Gemini ou Groq, cota grátis): pergunte "como está o ping pro Google?" e receba o relatório
+- **Modo TV** com rodízio de cenas: visão geral, mostradores, mapa da rede, equipamentos, últimas 24 h e câmeras
 - **Speedtest automático** diário no horário que você escolher
 - **Câmeras do DVR Intelbras** (MHDX, API compatível Dahua) **ao vivo só enquanto alguém assiste** — roda até no Raspberry Pi 3
 - **Integrações**: MikroTik (REST), AdGuard Home, SNMP, Zabbix, agentes remotos
@@ -87,6 +88,25 @@ Cada aparelho escolhe o seu em **Configurações → Aparência**. O admin defin
 
 ---
 
+## 🤖 Bot no Telegram
+
+O mesmo bot que manda os alertas também responde. Configure em **Configurações → Alertas → Bot e IA no Telegram** (o token e o Chat ID do Telegram precisam estar preenchidos; o bot só conversa com esse chat).
+
+| Comando | O que faz |
+|---|---|
+| `/status` | resumo: internet, cada destino e alertas abertos |
+| `/ping <destino ou IP> [n]` | ping agora, comparado com as últimas 24 h |
+| `/trace <destino ou IP>` | traceroute |
+| `/alertas` | incidentes abertos e das últimas 24 h |
+| `/mk` | MikroTik: CPU, temperatura e tráfego das portas |
+
+**Com IA** (opcional), dá para perguntar em português: *"a internet caiu essa noite?"*, *"por que o Quad9 está lento?"*, *"faz um traceroute pro 1.1.1.1"*. A IA escolhe as consultas, o NetNOC executa e ela escreve a resposta. Duas opções com cota grátis:
+
+- **Google Gemini** — chave em [aistudio.google.com/apikey](https://aistudio.google.com/apikey)
+- **Groq** — chave em [console.groq.com/keys](https://console.groq.com/keys)
+
+A IA só tem acesso a ferramentas de leitura: não altera configuração, não reinicia nada e não roda comandos livres.
+
 ## 📺 Modo TV
 
 Tela cheia, pensada para ficar ligada o dia todo: relógio grande, rodízio automático de cenas e alerta em tela cheia quando algo crítico acontece (com som opcional).
@@ -94,6 +114,10 @@ Tela cheia, pensada para ficar ligada o dia todo: relógio grande, rodízio auto
 | Visão geral | Últimas 24 horas |
 |---|---|
 | ![Modo TV — visão geral](docs/img/tv-visao-geral.jpg) | ![Modo TV — últimas 24 horas](docs/img/tv-24h.jpg) |
+
+**Mostradores**: um aparelho redondo por destino, no estilo termostato de parede. O anel gira com a latência e brilha em âmbar ou vermelho quando algo degrada ou cai. Só ela, fixa: `/#tv?cenas=6&tempo=0`.
+
+![Modo TV — mostradores](docs/img/tv-mostradores.jpg)
 
 Atalhos: `←` `→` trocam de cena, `espaço` pausa, `A` dispensa o alerta, `S` liga/desliga o som, `F` tela cheia, `Esc` sai.
 Para abrir direto numa TV: `http://IP:8000/#tv` — ou só algumas cenas: `/#tv?cenas=1,2,5&tempo=20`.
@@ -323,4 +347,6 @@ netlab/
 
 ## 📄 Licença
 
-MIT — veja [LICENSE](LICENSE).
+**Uso gratuito, todos os direitos reservados.** Você pode baixar e usar o NetLAB de graça na sua casa, no trabalho e nas suas redes. Sem autorização por escrito, não é permitido copiar ou reaproveitar o código, redistribuir ou vender o programa, publicar versões modificadas, nem trocar o nome ou o autor. Detalhes em [LICENSE](LICENSE).
+
+O NetLAB usa componentes de código aberto, que mantêm as próprias licenças: veja [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt).

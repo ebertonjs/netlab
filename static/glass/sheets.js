@@ -1182,6 +1182,53 @@
                 await act(() => post('/api/settings/telegram', {enabled: en.checked, bot_token: tok.value, chat_id: chat.value.trim(), min_severity: sev.value}), 'Telegram salvo');
               }, 'primary'),
               tbtn('Enviar teste', 'play', () => act(() => post('/api/settings/telegram/test'), 'Mensagem enviada'))))));
+        // bot + IA: você pergunta pelo Telegram e o NetNOC responde
+        const ab = await api('/api/settings/aibot').catch(() => null);
+        if (ab) {
+          const [bSwEl, bEn] = sw('Responder mensagens no Telegram', ab.enabled);
+          const prov = select([['none', 'Nenhuma (só comandos)'], ['gemini', 'Google Gemini (cota grátis)'], ['groq', 'Groq (cota grátis, muito rápido)']], ab.provider);
+          const gKey = inp({type: 'password', value: ab.gemini_key, autocomplete: 'off', placeholder: 'AIza…'});
+          const gMod = inp({value: ab.gemini_model, placeholder: 'gemini-3.5-flash-lite', list: 'aiGemModels'});
+          const qKey = inp({type: 'password', value: ab.groq_key, autocomplete: 'off', placeholder: 'gsk_…'});
+          const qMod = inp({value: ab.groq_model, placeholder: 'openai/gpt-oss-120b', list: 'aiGroqModels'});
+          const [anyEl, anyH] = sw('Permitir ping e traceroute para qualquer IP ou site (não só os destinos)', ab.any_host);
+          const gBox = h('div', {class: 'form'}, h('div', {class: 'row2'}, field('Chave do Gemini', gKey), field('Modelo', gMod)),
+            h('datalist', {id: 'aiGemModels'}, ...['gemini-3.5-flash-lite', 'gemini-3.8-flash'].map(v => h('option', {value: v}))),
+            h('div', {class: 'hint'}, 'Chave grátis em ', h('a', {href: 'https://aistudio.google.com/apikey', target: '_blank', rel: 'noopener', text: 'aistudio.google.com/apikey'}),
+              '. Flash-Lite tem cota grátis maior; o 3.8 Flash raciocina melhor, mas a cota grátis é bem menor.'));
+          const qBox = h('div', {class: 'form'}, h('div', {class: 'row2'}, field('Chave do Groq', qKey), field('Modelo', qMod)),
+            h('datalist', {id: 'aiGroqModels'}, ...['openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'qwen/qwen3.8-27b'].map(v => h('option', {value: v}))),
+            h('div', {class: 'hint'}, 'Chave grátis em ', h('a', {href: 'https://console.groq.com/keys', target: '_blank', rel: 'noopener', text: 'console.groq.com/keys'}),
+              '. Se o Groq aposentar o modelo, troque aqui pelo que ele indicar.'));
+          const syncP = () => { gBox.hidden = prov.value !== 'gemini'; qBox.hidden = prov.value !== 'groq'; };
+          prov.addEventListener('change', syncP); syncP();
+          const st = ab.status || {};
+          const stLine = st.last_error && (!st.last_msg_ts || st.last_error_ts > st.last_msg_ts)
+            ? h('div', {class: 'callout', text: `Último erro (${dmhm(st.last_error_ts)}): ${st.last_error}`})
+            : st.last_msg_ts ? h('div', {class: 'hint', text: `Última mensagem recebida: ${dmhm(st.last_msg_ts)}`}) : null;
+          const q = inp({placeholder: 'Ex.: como está o ping pro Google?  ou  /status'});
+          const out = h('pre', {class: 'ai-out', hidden: true});
+          const ask = async () => {
+            if (needAdmin()) return;
+            out.hidden = false; out.textContent = 'Pensando…';
+            const r = await act(() => post('/api/settings/aibot/test', {question: q.value.trim()}));
+            out.textContent = r ? r.answer + `\n\n— ${r.secs}s` + (r.tools && r.tools.length ? ' · consultou: ' + r.tools.join(', ') : '') : 'Falhou (veja o aviso).';
+          };
+          q.addEventListener('keydown', e => { if (e.key === 'Enter') ask(); });
+          R.append(sec('bolt', 'Bot e IA no Telegram',
+            ab.telegram_ready ? null : h('div', {class: 'callout', text: 'Preencha o token do bot e o Chat ID acima: o bot só conversa com esse chat.'}),
+            h('div', {class: 'form'}, bSwEl,
+              h('div', {class: 'hint', text: 'Comandos que funcionam sempre: /status, /ping <destino ou IP>, /trace <destino>, /alertas, /mk. Com uma IA ativa, dá para perguntar em português: "a internet caiu essa noite?", "como está o ping pro Cloudflare?".'}),
+              field('IA', prov), gBox, qBox, anyEl, stLine,
+              h('div', {style: {display: 'flex', gap: '8px'}},
+                tbtn('Salvar', 'check', async () => {
+                  if (needAdmin()) return;
+                  if (await act(() => post('/api/settings/aibot', {enabled: bEn.checked, provider: prov.value, gemini_key: gKey.value, gemini_model: gMod.value.trim(),
+                    groq_key: qKey.value, groq_model: qMod.value.trim(), any_host: anyH.checked}), 'Bot salvo')) ctx.reopen();
+                }, 'primary')),
+              h('div', {class: 'hint', text: 'Teste aqui sem o celular (salve antes):'}),
+              h('div', {style: {display: 'flex', gap: '8px'}}, q, tbtn('Perguntar', 'play', ask)), out)));
+        }
         const mt = await api('/api/maintenance').catch(() => []);
         const ml = h('div', {class: 'list'});
         const now = Date.now() / 1000;

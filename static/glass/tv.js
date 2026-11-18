@@ -5,7 +5,7 @@
 'use strict';
 (function () {
   const {h, clear, api, ms, pct, hm, dur, bps, num, brandSvg, hue, sparkArea, S} = window.NN;
-  const SCENES = [[1, 'Visão geral', 'home'], [2, 'Topologia', 'network'], [3, 'Equipamentos', 'router'], [4, 'Últimas 24 horas', 'clock'], [5, 'Câmeras', 'video']];
+  const SCENES = [[1, 'Visão geral', 'home'], [2, 'Topologia', 'network'], [3, 'Equipamentos', 'router'], [4, 'Últimas 24 horas', 'clock'], [5, 'Câmeras', 'video'], [6, 'Mostradores', 'gauge']];
   const NSC = SCENES.length;
   const KEY = 'netnoc_tv_glass';
   const GOAL = 99.9;
@@ -22,12 +22,16 @@
   // ------------------------------------------------------------------ configuração
   function ls(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (_) { return null; } }
   function loadCfg() {
-    let c = {scenes: [1, 2, 3, 4], secs: 15, camAuto: false};
+    let c = {scenes: [1, 6, 2, 3, 4], secs: 15, camAuto: false, dialAuto: true};
     try {
       const j = JSON.parse(ls(KEY) || 'null');
-      if (j && Array.isArray(j.scenes)) c = {scenes: j.scenes.filter(n => n >= 1 && n <= NSC), secs: Number(j.secs) >= 0 ? Number(j.secs) : 15, camAuto: !!j.camAuto};
+      if (j && Array.isArray(j.scenes)) {
+        c = {scenes: j.scenes.filter(n => n >= 1 && n <= NSC), secs: Number(j.secs) >= 0 ? Number(j.secs) : 15, camAuto: !!j.camAuto, dialAuto: !!j.dialAuto};
+        // v3.10: a cena Mostradores entra uma vez no rodízio de quem já tinha configurado; se desmarcar, fica desmarcada
+        if (!c.dialAuto) { c.dialAuto = true; if (!c.scenes.includes(6)) c.scenes.push(6); }
+      }
     } catch (_) { /* padrão */ }
-    if (!c.scenes.length) c.scenes = [1, 2, 3, 4];
+    if (!c.scenes.length) c.scenes = [1, 6, 2, 3, 4];
     return c;
   }
   const saveCfg = () => ls(KEY, JSON.stringify(cfg));
@@ -498,7 +502,84 @@
     },
     stop() { (this.players || []).forEach(p => { try { p.stop(); } catch (_) { /* ok */ } }); this.players = []; },
   };
-  const SC = {1: scene1, 2: scene2, 3: scene3, 4: scene4, 5: scene5};
+  // ================================================================== CENA 6 — Mostradores
+  // Um aparelho redondo por destino (problemas primeiro) + um de saúde geral com o relógio.
+  // O anel serrilhado gira conforme a latência; brilho âmbar = degradado, vermelho pulsando = fora.
+  const KIND_ICO = {http: 'globe', https: 'globe', tcp: 'link', icmp: 'activity', agent: 'server'};
+  const scene6 = {
+    build() {
+      this.items = new Map(); this.order = '';
+      this.grid = h('div', {class: 'tvg-dials'});
+      this.node = h('div', {class: 'tvg-sc tvg-s6'}, this.grid);
+      this.onResize = () => this.fit();
+      window.addEventListener('resize', this.onResize);
+      return this.node;
+    },
+    fit() {
+      const n = this.grid.children.length;
+      const W = this.node.clientWidth, H = this.node.clientHeight;
+      if (!n || !W || !H) return;
+      const gap = parseFloat(getComputedStyle(this.grid).columnGap) || 16;
+      const f = window.NNDial.fit(n, W, H, gap);
+      this.grid.style.setProperty('--d', f.size + 'px');
+      this.grid.style.setProperty('--cols', f.cols);
+    },
+    dial(key) {
+      let d = this.items.get(key);
+      if (!d) { d = window.NNDial.create(); this.items.set(key, d); }
+      return d;
+    },
+    update() {
+      if (!window.NNDial) return;
+      const H = health(), T = live(), o = S.overview || {};
+      const order = {bad: 0, iso: 1, warn: 2, ok: 3, na: 4};
+      const list = targetsList().slice().sort((a, b) => order[H.st[a.name] || 'na'] - order[H.st[b.name] || 'na']).slice(0, 15);
+
+      // saúde geral
+      const g = this.dial('__rede');
+      const sc = H.score, d0 = new Date();
+      const lat = num(o.avg_latency);
+      g.set({
+        state: sc == null ? 'na' : sc >= 90 ? 'ok' : sc >= 70 ? 'warn' : 'bad',
+        topIcon: o.internet_online === false ? 'wifiOff' : 'globe', top: o.public_ip || (o.internet_online === false ? 'sem internet' : 'internet'),
+        kind: 'home', label: 'Saúde da rede', big: sc == null ? '--' : String(sc), unit: sc == null ? '' : '%',
+        sub: [['ONLINE', H.known ? H.online + '/' + H.known : '–'], ['ALERTAS', String(H.incs.length)]],
+        foot: pad(d0.getHours()) + ':' + pad(d0.getMinutes()), footSmall: WD[d0.getDay()].slice(0, 3).toUpperCase(),
+        q: lat == null ? 0 : lat < 30 ? 3 : lat < 80 ? 2 : 1, loss: (o.avg_loss_pct || 0) > 0.5, net: o.internet_online !== false,
+        rot: sc == null ? 0 : sc * 3.6, aria: `Saúde da rede ${sc == null ? 'sem dados' : sc + '%'}`,
+      });
+
+      for (const t of list) {
+        const st = H.st[t.name] || 'na', x = T[t.name] || {};
+        const l = num(x.latency != null ? x.latency : t.latency);
+        const loss = num(x.loss_pct != null ? x.loss_pct : t.loss_pct) || 0;
+        const jit = num(x.avg_jitter != null ? x.avg_jitter : x.jitter);
+        const down = st === 'bad' || st === 'iso';
+        const kind = (t.type || 'icmp').toLowerCase();
+        this.dial(t.name).set({
+          state: st, off: down, topIcon: KIND_ICO[kind] || 'activity', top: String(t.host || '').replace(/^https?:\/\//, ''), kind: down ? 'wifiOff' : 'signal',
+          label: t.name, big: down ? (st === 'iso' ? 'ISO' : 'OFF') : (l == null ? '--' : ms(l)), unit: down || l == null ? '' : 'ms',
+          sub: [['JIT', jit == null ? '–' : ms(jit), 'ms'], ['PERDA', pct(loss, 0), '%']],
+          foot: t.uptime_24h != null ? pct(t.uptime_24h, 1) + '%' : '–', footSmall: '24H',
+          q: down ? 0 : st === 'warn' ? 1 : l == null ? 0 : l < 30 ? 3 : l < 80 ? 2 : 1,
+          loss: loss > 0, net: !down, rot: l == null ? null : l * 6,
+          aria: `${t.name}: ${down ? (st === 'iso' ? 'isolado' : 'offline') : ms(l) + ' ms'}, perda ${pct(loss, 0)}%`,
+        });
+      }
+
+      // ordem e remoção só quando a lista muda (mover nós à toa reinicia as animações)
+      const keys = ['__rede', ...list.map(t => t.name)];
+      const sig = keys.join('\u0000');
+      if (sig !== this.order) {
+        this.order = sig;
+        for (const k of [...this.items.keys()]) if (!keys.includes(k)) this.items.delete(k);
+        clear(this.grid).append(...keys.map(k => this.items.get(k).el));
+        this.fit();
+      }
+    },
+    stop() { window.removeEventListener('resize', this.onResize); this.items = new Map(); this.order = ''; },
+  };
+  const SC = {1: scene1, 2: scene2, 3: scene3, 4: scene4, 5: scene5, 6: scene6};
 
   // ------------------------------------------------------------------ alerta e avisos
   function beep(freq) {

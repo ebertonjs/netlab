@@ -1,5 +1,16 @@
 # Histórico de versões
 
+## v3.10 — Mostradores e bot com IA no Telegram
+- **Bot no Telegram**: além de mandar alertas, o NetNOC agora responde. Comandos que funcionam sempre: `/status`, `/ping <destino ou IP> [n]`, `/trace <destino>`, `/alertas`, `/mk`.
+- **Perguntas em português com IA** (opcional, cota grátis): **Google Gemini** ou **Groq**. Ex.: "como está o ping pro Google?" — a IA faz o ping na hora, compara com as últimas 24 h e responde; "a internet caiu essa noite?" — consulta os incidentes. Ela só usa ferramentas de leitura (status, ping, traceroute, histórico, incidentes, MikroTik, DNS, speedtest, servidor) e nunca inventa números.
+- Segurança: responde só ao Chat ID configurado, nada é alterado pela IA, ping/traceroute com host validado e limite por minuto, chaves cifradas no banco e fora do backup.
+- **Nova licença**: uso gratuito, todos os direitos reservados (não é permitido copiar o código, redistribuir, vender nem publicar versões modificadas). Versões anteriores continuam sob MIT. Componentes de terceiros listados em `THIRD-PARTY-NOTICES.txt`.
+- Configurações → Alertas → **Bot e IA no Telegram**: escolha da IA, chaves, modelo, e um campo para testar a pergunta sem o celular.
+- Nova cena **Mostradores** no Modo TV: um aparelho redondo por destino, no estilo termostato de parede, com anel serrilhado, visor preto e números grandes. O anel gira conforme a latência; brilho âmbar quando o destino está degradado e vermelho pulsando quando cai. O visor mostra latência, jitter, perda, disponibilidade 24 h e qualidade em barras. O primeiro mostrador traz a saúde da rede e o relógio.
+- Ajusta sozinho o tamanho e o número de colunas para caber na tela (até 15 destinos, problemas primeiro). O aparelho fica escuro em qualquer tema.
+- Entra uma vez no rodízio de quem já tinha o Modo TV configurado. Para deixar só ela na parede: `#tv?cenas=6&tempo=0`.
+- Visual inspirado no [hc-dial-card](https://github.com/Gyuszko55/hc-dial-card) (MIT).
+
 ## v3.9 — coletor em Rust (opcional)
 - Novo **`netnoc-collector`** (pasta `collector/`): binário Rust que assume o **ping** de todos os destinos (ICMP nativo, sem criar um processo `ping` a cada medição, mais TCP e HTTP), o **MikroTik** e o **AdGuard Home**, gravando no mesmo banco. Usa poucos MB de RAM, sondas em paralelo, 1 commit por segundo e encerramento limpo no SIGTERM. Veja `collector/README.md`.
 - O Python continua com a API, o painel, os incidentes, os rollups, o DHCP, o DNS e o speedtest. Com `NETNOC_EXTERNAL_COLLECTOR=ping,mikrotik,agh` ele para esses três workers e só lê as amostras novas para avaliar incidentes, sem mudar a lógica.

@@ -1,0 +1,95 @@
+Componentes de terceiros usados pelo NetLAB / NetNOC
+Third-party components used by NetLAB / NetNOC
+
+Cada componente abaixo continua sob a própria licença; a licença do NetLAB
+(arquivo LICENSE) não se aplica a eles.
+Each component below remains under its own license; the NetLAB license
+(LICENSE file) does not apply to them.
+
+-----------------------------------------------------------------------------
+Incluídos neste repositório / Included in this repository
+-----------------------------------------------------------------------------
+
+Chart.js 4.4.3 (static/chart.umd.js)
+  https://www.chartjs.org — MIT License — (c) 2024 Chart.js Contributors
+
+Inter (static/glass/fonts/inter-*.woff2)
+  https://rsms.me/inter — SIL Open Font License 1.1
+  Texto completo: static/glass/fonts/LICENSE-Inter-OFL.txt
+
+JetBrains Mono (static/glass/fonts/jetbrains-mono-*.woff2)
+  https://www.jetbrains.com/lp/mono — SIL Open Font License 1.1
+  Texto completo: static/glass/fonts/LICENSE-JetBrainsMono-OFL.txt
+
+Roboto (static/glass/fonts/roboto-*.woff2)
+  https://fonts.google.com/specimen/Roboto — Apache License 2.0
+  Texto completo: static/glass/fonts/LICENSE-Roboto.txt
+
+Lucide (desenhos dos ícones em static/glass/ui-icons.js)
+  https://lucide.dev — ISC License
+  Copyright (c) for portions of Lucide are held by Cole Bemis 2013-2022 as part
+  of Feather (MIT). All other copyright (c) for Lucide are held by Lucide
+  Contributors 2022.
+
+Simple Icons (ícones de marcas em static/icons.js)
+  https://simpleicons.org — CC0 1.0 (domínio público). As marcas pertencem aos
+  respectivos donos.
+
+hc-dial-card (base visual do mostrador em static/glass/dial.css)
+  https://github.com/Gyuszko55/hc-dial-card — MIT License — (c) Gyuszko55
+
+-----------------------------------------------------------------------------
+Baixados na instalação / Downloaded at install time
+-----------------------------------------------------------------------------
+
+Bibliotecas Python (requirements.txt): FastAPI (MIT), Uvicorn (BSD-3-Clause),
+psutil (BSD-3-Clause), Requests (Apache 2.0), dnspython (ISC),
+cryptography (Apache 2.0 / BSD), websockets (BSD-3-Clause).
+
+go2rtc (vídeo ao vivo do DVR, baixado pelo install.sh)
+  https://github.com/AlexxIT/go2rtc — MIT License — (c) Alexey Khit
+  A lógica de buffer de static/glass/camplayer.js é baseada no video-rtc.js
+  do go2rtc (mesma licença MIT).
+
+Coletor em Rust (collector/): as dependências listadas em collector/Cargo.toml
+(tokio, reqwest, rustls, rusqlite/SQLite, serde, tracing, surge-ping, fernet
+e outras) são distribuídas sob MIT e/ou Apache 2.0; o SQLite é de domínio
+público. Ao compilar, elas passam a fazer parte do binário netnoc-collector.
+
+-----------------------------------------------------------------------------
+MIT License (texto usado por Chart.js, hc-dial-card e go2rtc)
+-----------------------------------------------------------------------------
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+-----------------------------------------------------------------------------
+ISC License (Lucide)
+-----------------------------------------------------------------------------
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY
+AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM
+LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR
+OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+PERFORMANCE OF THIS SOFTWARE.

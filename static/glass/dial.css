@@ -1,0 +1,97 @@
+/* NetNOC — mostrador redondo (estilo termostato de parede).
+   Visual inspirado no hc-dial-card (Gyuszko55, licença MIT). O aparelho é sempre escuro, em qualquer tema. */
+.nnd {
+  --st: #7bc043; --glow: transparent;
+  position: relative; width: 100%; aspect-ratio: 1; container-type: inline-size; --q: 1cqw;
+  user-select: none; -webkit-user-select: none; color: #fff;
+  font-family: Inter, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+.nnd.warn { --st: #f5b83d; --glow: rgba(245, 184, 61, .45); }
+.nnd.bad  { --st: #ef5350; --glow: rgba(239, 83, 80, .6); }
+.nnd.iso  { --st: #8a8f98; --glow: rgba(138, 143, 152, .35); }
+.nnd.na   { --st: #555b63; }
+
+/* anel serrilhado: a parte que gira acompanha o valor (latência / saúde) */
+.nnd-ring {
+  position: absolute; inset: 0; border-radius: 50%; overflow: hidden;
+  box-shadow: 0 0 0 1px #000, 0 0 calc(5 * var(--q)) var(--glow), 0 calc(2 * var(--q)) calc(6 * var(--q)) rgba(0, 0, 0, .8);
+  transition: box-shadow .6s;
+}
+.nnd.bad .nnd-ring { animation: nndGlow 1.6s ease-in-out infinite; }
+@keyframes nndGlow { 50% { box-shadow: 0 0 0 1px #000, 0 0 calc(1.5 * var(--q)) var(--glow), 0 calc(2 * var(--q)) calc(6 * var(--q)) rgba(0, 0, 0, .8); } }
+.nnd-ring::after {
+  content: ""; position: absolute; inset: 0; border-radius: 50%; pointer-events: none; mix-blend-mode: overlay;
+  background: conic-gradient(from 200deg, rgba(255,255,255,.30), rgba(0,0,0,.40) 25%, rgba(255,255,255,.14) 50%, rgba(0,0,0,.50) 75%, rgba(255,255,255,.30));
+  box-shadow: inset 0 0 calc(2.4 * var(--q)) rgba(0, 0, 0, .9);
+}
+.nnd-knurl {
+  position: absolute; inset: 0; border-radius: 50%; will-change: transform;
+  transform: rotate(var(--rot, 0deg)); transition: transform 1.6s cubic-bezier(.2, .8, .2, 1);
+  background:
+    repeating-conic-gradient(from 0deg, rgba(255,255,255,0) 0deg 1.5deg, rgba(255,255,255,.22) 2.5deg, rgba(255,255,255,0) 3.5deg 5deg),
+    repeating-conic-gradient(from 0deg, #0c0d0e 0deg 1.4deg, #3a3e43 2.2deg, #a3aab1 3deg, #2a2d31 4deg, #0c0d0e 5deg);
+}
+.nnd-mark {
+  position: absolute; left: 50%; top: 1.6%; width: 2.4%; height: 2.4%; margin-left: -1.2%; border-radius: 50%;
+  background: var(--st); box-shadow: 0 0 calc(1.2 * var(--q)) calc(.4 * var(--q)) var(--st); transition: background .6s, box-shadow .6s;
+}
+.nnd.ok .nnd-mark { opacity: .55; box-shadow: none; }
+.nnd-bezel {
+  position: absolute; inset: 6%; border-radius: 50%;
+  background: radial-gradient(circle at 35% 25%, #4a4f55 0%, #15171a 35%, #000 60%, #24272b 100%);
+  box-shadow: 0 0 0 2px #000, inset 0 2px 6px rgba(255,255,255,.25), inset 0 -4px 10px rgba(0,0,0,.9);
+}
+.nnd-disp {
+  position: absolute; inset: 11%; border-radius: 50%; overflow: hidden;
+  background: radial-gradient(circle at 50% 40%, #0b0c0e, #000 70%);
+  box-shadow: inset 0 0 18px #000, 0 0 0 2px #111;
+}
+.nnd-disp::before {
+  content: ""; position: absolute; inset: 0; border-radius: 50%; pointer-events: none;
+  background: linear-gradient(160deg, rgba(255,255,255,.07), rgba(255,255,255,0) 40%);
+}
+
+/* conteúdo: posições em % do visor, tamanhos em largura do mostrador */
+.nnd .a { position: absolute; transform: translate(-50%, -50%); display: flex; align-items: center; gap: calc(.8 * var(--q)); white-space: nowrap; }
+.nnd .a svg { width: calc(5.4 * var(--q)); height: calc(5.4 * var(--q)); flex: none; }
+.nnd-top { left: 50%; top: 13%; max-width: 62%; font-size: calc(3.6 * var(--q)); color: #d8d8d8; }
+.nnd-top span { overflow: hidden; text-overflow: ellipsis; }
+.nnd-top svg { width: calc(4.2 * var(--q)) !important; height: calc(4.2 * var(--q)) !important; color: #f2f2f2; }
+.nnd-kind { left: 22%; top: 27%; color: #4fb3ff; }
+.nnd-dot { left: 41%; top: 27%; width: calc(7.4 * var(--q)); height: calc(7.4 * var(--q)); border-radius: 50%; justify-content: center; background: var(--st); transition: background .6s; }
+.nnd-dot svg { width: calc(4.6 * var(--q)) !important; height: calc(4.6 * var(--q)) !important; color: #fff; stroke-width: 2.4; }
+.nnd.warn .nnd-dot svg { color: #1a1300; }
+.nnd-q { left: 62%; top: 27%; gap: calc(.5 * var(--q)); align-items: flex-end; }
+.nnd-q i { display: block; width: calc(3.2 * var(--q)); border-radius: calc(.3 * var(--q)); background: #2a2a2a; transition: background .6s; }
+.nnd-q i:nth-child(1) { height: calc(1.4 * var(--q)); }
+.nnd-q i:nth-child(2) { height: calc(2.2 * var(--q)); }
+.nnd-q i:nth-child(3) { height: calc(3 * var(--q)); }
+.nnd-q i.on { background: var(--st); }
+.nnd-loss { left: 86%; top: 42%; color: #333; }
+.nnd-loss.on { color: #f5b83d; animation: nndBlink 1s infinite; }
+.nnd-net { left: 86%; top: 54%; color: #2f8cff; }
+.nnd-net.off { color: #e53935; }
+@keyframes nndBlink { 50% { opacity: .25; } }
+.nnd-lbl { left: 50%; top: 35.5%; max-width: 64%; font-size: calc(3.2 * var(--q)); letter-spacing: .14em; color: #cfcfcf; text-transform: uppercase; }
+.nnd-lbl span { overflow: hidden; text-overflow: ellipsis; }
+.nnd-big { left: 50%; top: 48.5%; font-weight: 300; font-size: calc(19 * var(--q)); line-height: 1; letter-spacing: -.03em; font-variant-numeric: tabular-nums; transition: color .6s; }
+.nnd-big sup { font-size: calc(4.6 * var(--q)); font-weight: 400; letter-spacing: 0; vertical-align: top; position: relative; top: calc(1.6 * var(--q)); margin-left: calc(.5 * var(--q)); }
+.nnd.off .nnd-big, .nnd.na .nnd-big { color: #777; }
+.nnd-line { left: 50%; top: 61%; width: 52%; height: calc(.6 * var(--q)); border-radius: calc(1 * var(--q)); background: var(--st); transition: background .6s; }
+.nnd.bad .nnd-line { animation: nndBlink 1.2s infinite; }
+.nnd-sub { left: 50%; top: 70%; gap: calc(3.4 * var(--q)); font-size: calc(5 * var(--q)); font-weight: 300; font-variant-numeric: tabular-nums; }
+.nnd-sub > span { display: flex; align-items: flex-start; gap: calc(.8 * var(--q)); }
+.nnd-sub small { font-size: calc(2.7 * var(--q)); letter-spacing: .1em; color: #cfcfcf; margin-top: calc(.7 * var(--q)); font-weight: 400; }
+.nnd-sub u { text-decoration: none; font-size: calc(2.9 * var(--q)); margin-top: calc(.5 * var(--q)); font-weight: 400; }
+.nnd-foot { left: 50%; top: 84%; font-size: calc(4.6 * var(--q)); font-weight: 500; letter-spacing: .04em; gap: calc(2 * var(--q)); font-variant-numeric: tabular-nums; }
+.nnd-foot small { font-size: .62em; color: #bbb; letter-spacing: .12em; font-weight: 500; }
+
+@media (prefers-reduced-motion: reduce) {
+  .nnd-knurl { transition: none; }
+  .nnd.bad .nnd-ring, .nnd.bad .nnd-line, .nnd-loss.on { animation: none; }
+}
+
+/* ---------- Modo TV: cena Mostradores ---------- */
+.tvg-s6 { display: grid; place-items: center; }
+.tvg-dials { display: grid; gap: 1.6em; grid-template-columns: repeat(var(--cols, 4), var(--d, 18em)); justify-content: center; align-content: center; }
+.tvg-dials > .nnd { width: var(--d, 18em); }

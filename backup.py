@@ -8,6 +8,7 @@ import notifier
 import security
 import snmp
 import zabbix
+import aibot
 
 FORMAT = "netnoc-backup"
 VERSION = 2
@@ -19,6 +20,7 @@ SECRET_MAP = {
     "agh": (("password",), ("host", "port", "username", "use_https")),
     "zabbix": (("token",), ("url",)),
     "dvr": (("password",), ("host", "http_port", "rtsp_port", "username")),
+    "ai_bot": (("gemini_key", "groq_key"), ()),
 }
 PLAIN = ("targets", "dns_servers", "intervals", "app_name", "maintenance", "ui_default", "speedtest_auto")
 
@@ -30,7 +32,7 @@ def export_cfg():
         if raw is not None:
             out[k] = raw if k == "app_name" else json.loads(raw)
     cfgs = {"telegram": monitor.get_telegram(), "mikrotik": monitor.get_mikrotik(),
-            "agh": monitor.get_agh(), "zabbix": zabbix.get_cfg(), "dvr": dvr.get_cfg()}
+            "agh": monitor.get_agh(), "zabbix": zabbix.get_cfg(), "dvr": dvr.get_cfg(), "ai_bot": aibot.get_cfg()}
     for k, (secrets_, _) in SECRET_MAP.items():
         c = dict(cfgs[k])
         for f in secrets_:
@@ -148,11 +150,15 @@ def _validate(data):
             m.setdefault("id", str(int(m["start"])))
             m["targets"] = [str(x) for x in (m.get("targets") or [])]
         out["maintenance"] = ms
-    for k in ("telegram", "mikrotik", "agh", "zabbix", "dvr"):
+    for k in ("telegram", "mikrotik", "agh", "zabbix", "dvr", "ai_bot"):
         if k in s:
             c = s[k]
             if not isinstance(c, dict):
                 raise BackupError(f"{k}: formato inválido")
+            if k == "ai_bot" and c.get("provider", "none") not in aibot.PROVIDERS:
+                raise BackupError("ai_bot: provedor inválido")
+            if k == "ai_bot" and any(c.get(m) and not aibot.valid_model(c[m]) for m in ("gemini_model", "groq_model")):
+                raise BackupError("ai_bot: modelo inválido")
             if k in ("mikrotik", "agh", "dvr") and c.get("host") and not security.valid_host(c["host"]):
                 raise BackupError(f"{k}: host inválido")
             if k == "zabbix" and c.get("url") and not security.valid_url(c["url"]):
@@ -190,13 +196,13 @@ def import_cfg(data):
     norm = _validate(data)           # 400 antes de tocar no banco
     applied = []
     cur = {"telegram": monitor.get_telegram(), "mikrotik": monitor.get_mikrotik(),
-           "agh": monitor.get_agh(), "zabbix": zabbix.get_cfg(), "dvr": dvr.get_cfg()}
+           "agh": monitor.get_agh(), "zabbix": zabbix.get_cfg(), "dvr": dvr.get_cfg(), "ai_bot": aibot.get_cfg()}
     for k in PLAIN:
         if k in norm:
             db.set_setting(k, norm[k] if k == "app_name" else json.dumps(norm[k]))
             applied.append(k)
     monitor._invalidate_targets()
-    for k in ("telegram", "mikrotik", "agh", "zabbix", "dvr"):
+    for k in ("telegram", "mikrotik", "agh", "zabbix", "dvr", "ai_bot"):
         if k in norm:
             new = dict(cur[k])
             new.update(norm[k])

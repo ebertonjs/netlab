@@ -7,6 +7,7 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Red
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+import aibot
 import backup
 import checks
 import db
@@ -21,7 +22,7 @@ import stats
 import zabbix
 
 CFG = monitor.CFG
-APP_VERSION = "3.9"
+APP_VERSION = "3.10"
 STARTED_AT = time.time()
 
 RANGE_SECONDS = {"5m": 300, "1h": 3600, "24h": 86400, "7d": 7 * 86400, "30d": 30 * 86400}
@@ -30,6 +31,9 @@ RANGE_SECONDS = {"5m": 300, "1h": 3600, "24h": 86400, "7d": 7 * 86400, "30d": 30
 def startup():
     monitor.start_all()
     dvr.start()
+    aibot.start({"overview": overview, "targets": _targets_payload, "incidents": incidents, "series": stats.series,
+                 "uptime": stats.uptime_pct, "mikrotik_status": mikrotik_status_ep, "mikrotik_ifaces": mikrotik_interfaces_ep,
+                 "dns": dns_status, "speedtests": speedtest_history, "system": system_ep})
     pw = security.ensure_admin()
     if pw:
         banner = "=" * 60
@@ -356,6 +360,53 @@ def test_telegram_ep():
     if not monitor.send_telegram(f"✅ Teste de alerta {monitor.get_app_name()} — configuração funcionando!"):
         raise HTTPException(400, "Não foi possível enviar. Confira o token e chat_id.")
     return {"ok": True}
+
+
+class AiBotIn(BaseModel):
+    enabled: bool = False
+    provider: str = "none"
+    gemini_key: str = ""
+    gemini_model: str = ""
+    groq_key: str = ""
+    groq_model: str = ""
+    any_host: bool = True
+
+
+@app.get("/api/settings/aibot")
+def get_aibot_ep():
+    tg = monitor.get_telegram()
+    return {**security.mask_cfg(aibot.get_cfg(), aibot.SECRET), "status": {k: v for k, v in aibot.status().items() if k != "thread"},
+            "telegram_ready": bool(tg.get("bot_token") and tg.get("chat_id"))}
+
+
+@app.post("/api/settings/aibot")
+def set_aibot_ep(data: AiBotIn, request: Request):
+    new = security.merge_secrets(aibot.get_cfg(), data.dict(), aibot.SECRET)
+    try:
+        aibot.set_cfg(new)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    audit(request, "aibot", new["provider"])
+    return {"ok": True}
+
+
+class AiAskIn(BaseModel):
+    question: str = ""
+
+
+@app.post("/api/settings/aibot/test")
+def test_aibot_ep(data: AiAskIn, request: Request):
+    """Pergunta de teste pela interface (mesmo caminho do Telegram, sem precisar do celular)."""
+    q = (data.question or "").strip()[:500] or "Me dá um resumo rápido da rede agora."
+    t0 = time.time()
+    try:
+        if q.startswith("/"):
+            return {"ok": True, "answer": aibot.handle(q, "painel"), "tools": [], "secs": round(time.time() - t0, 1)}
+        answer, used = aibot.ask(q, chat="painel")
+    except RuntimeError as e:
+        raise HTTPException(400, str(e))
+    audit(request, "aibot_test")
+    return {"ok": True, "answer": answer, "tools": used, "secs": round(time.time() - t0, 1)}
 
 
 class MikrotikIn(BaseModel):
