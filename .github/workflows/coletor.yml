@@ -1,10 +1,13 @@
 # Compila o netnoc-collector (Rust) para o Raspberry Pi e publica em Releases.
-# Dispara ao criar uma tag de versão (ex.: v3.13) ou manualmente (Actions → Coletor → Run workflow).
+# Dispara quando o código do coletor muda na main, numa tag de versão ou manualmente
+# (Actions → Coletor → Run workflow). A release usa a versão do Cargo.toml (tag coletor-vX.Y.Z).
 # No Pi:  curl -LO https://github.com/ebertonjs/netlab/releases/latest/download/netnoc-collector-armhf
 name: Coletor
 
 on:
   push:
+    branches: [main]
+    paths: ["collector/**", ".github/workflows/coletor.yml"]
     tags: ["v*"]
   workflow_dispatch:
 
@@ -48,15 +51,22 @@ jobs:
           cp target/aarch64-unknown-linux-musl/release/netnoc-collector ../dist/netnoc-collector-arm64
           cd ../dist && sha256sum netnoc-collector-* > SHA256SUMS.txt && ls -l && cat SHA256SUMS.txt
 
+      - name: Versão
+        id: ver
+        run: echo "v=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+
       - uses: actions/upload-artifact@v4
         with:
           name: netnoc-collector
           path: dist/*
 
-      - name: Publica na Release da tag
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Publica a Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: coletor-v${{ steps.ver.outputs.v }}
+          target_commitish: ${{ github.sha }}
+          name: Coletor ${{ steps.ver.outputs.v }}
+          make_latest: true
           files: dist/*
           body: |
             Coletor em Rust (opcional) para o NetNOC. No Raspberry Pi:
