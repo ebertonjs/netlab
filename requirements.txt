@@ -1,7 +1,17 @@
+# Dependências do NetNOC. As diretas ficam em versão exata; as indiretas que já quebraram projetos
+# FastAPI em atualizações (pydantic, starlette) ficam presas à versão maior.
+#
+# Para travar TUDO exatamente como está funcionando na sua máquina (recomendado em produção):
+#   venv/bin/pip freeze > requirements.lock
+# O install.sh usa o requirements.lock automaticamente quando ele existe (pip -c).
+# Não há um lock no repositório porque o Pi (armhf) instala pacotes já compilados do piwheels,
+# e as versões disponíveis lá não são as mesmas de um PC x86.
 fastapi==0.111.0
 uvicorn==0.30.1
 psutil==5.9.8
 requests==2.32.3
 dnspython==2.6.1
-cryptography>=42
 websockets==12.0
+cryptography>=42,<51
+pydantic>=2.7,<3
+starlette>=0.37.2,<0.38

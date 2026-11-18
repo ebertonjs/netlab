@@ -3,10 +3,20 @@
 //! resultados são juntados e gravados num commit a cada `flush_ms`.
 //! Colunas iguais às do Python: ts = início da sonda, latency em ms (NULL se falhou),
 //! jitter = |latência - última latência OK| (0 quando falha).
+//!
+//! O intervalo de cada destino NÃO entra em backoff: um destino fora continua sendo testado no
+//! intervalo dele, senão a volta demoraria a aparecer e a disponibilidade ficaria errada. O backoff
+//! fica na resolução de DNS: nomes resolvidos são reaproveitados por `dns_cache_secs` e um nome que
+//! não resolve espera 1, 2, 4… s (até `dns_max_backoff_secs`) antes de o DNS ser consultado de novo.
+//!
+//! O agendador (`run_with`) recebe qualquer `Probe`: em produção é o `Probers` (ICMP/TCP/HTTP de
+//! verdade); nos testes, uma sonda simulada.
 use std::collections::{HashMap, HashSet};
+use std::future::Future;
 use std::net::IpAddr;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicU16, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use rand::Rng;
@@ -15,17 +25,96 @@ use tokio::sync::{mpsc, watch, Semaphore};
 use tokio::time::{interval, timeout, Instant, MissedTickBehavior};
 use tracing::{debug, error, info, warn};
 
-use crate::config::PingCfg;
+use crate::backoff::Backoff;
+use crate::config::{PingCfg, RetryCfg};
 use crate::db::{Db, Rec};
 use crate::health::{now, Registry};
 use crate::settings::{Shared, Target};
 
-struct Probers {
+pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
+/// Uma sonda: latência em ms, ou None se o destino não respondeu.
+pub trait Probe: Send + Sync + 'static {
+    fn probe<'a>(&'a self, t: &'a Target) -> BoxFuture<'a, Option<f64>>;
+    /// Erro permanente a mostrar na saúde do módulo (ex.: sem permissão de ICMP).
+    fn health_error(&self) -> Option<String> {
+        None
+    }
+}
+
+// ------------------------------------------------------------------ cache de DNS com backoff
+#[derive(Debug)]
+struct DnsEntry {
+    ip: Option<IpAddr>,
+    until: Instant,
+    backoff: Backoff,
+}
+
+/// Resultado da consulta ao cache.
+#[derive(Debug, PartialEq)]
+pub enum Cached {
+    Hit(IpAddr),
+    /// nome falhou há pouco: ainda dentro do backoff, não consulta o DNS
+    Wait,
+    Miss,
+}
+
+pub struct DnsCache {
+    ttl: Duration,
+    max_backoff_s: f64,
+    map: Mutex<HashMap<String, DnsEntry>>,
+}
+
+impl DnsCache {
+    pub fn new(ttl: Duration, max_backoff_s: f64) -> Self {
+        Self { ttl, max_backoff_s, map: Mutex::new(HashMap::new()) }
+    }
+
+    pub fn get(&self, host: &str, now: Instant) -> Cached {
+        let m = self.map.lock().unwrap_or_else(|e| e.into_inner());
+        match m.get(host) {
+            Some(e) if now < e.until => e.ip.map(Cached::Hit).unwrap_or(Cached::Wait),
+            _ => Cached::Miss,
+        }
+    }
+
+    /// Guarda o resultado de uma resolução. Falha: espera 1, 2, 4… s (até o teto) antes de tentar de novo.
+    /// Devolve quantas falhas seguidas o nome tem.
+    pub fn store(&self, host: &str, ip: Option<IpAddr>, now: Instant) -> u32 {
+        let mut m = self.map.lock().unwrap_or_else(|e| e.into_inner());
+        if m.len() > 4096 {
+            m.retain(|_, e| e.until > now); // destinos removidos não ficam para sempre
+        }
+        let e = m.entry(host.to_string()).or_insert_with(|| DnsEntry {
+            ip: None,
+            until: now,
+            backoff: Backoff::new(self.max_backoff_s).without_jitter(),
+        });
+        match ip {
+            Some(ip) => {
+                e.backoff.ok();
+                e.ip = Some(ip);
+                e.until = now + self.ttl;
+                0
+            }
+            None => {
+                let n = e.backoff.fail();
+                e.ip = None;
+                // 1ª falha: 1 s; depois 2, 4, 8… (Backoff dobra a partir do "intervalo" de 0,5 s)
+                e.until = now + Duration::from_secs_f64(e.backoff.delay(0.5));
+                n
+            }
+        }
+    }
+}
+
+pub struct Probers {
     v4: Option<Client>,
     v6: Option<Client>,
     http: reqwest::Client,
     http_insecure: reqwest::Client,
     cfg: PingCfg,
+    dns: DnsCache,
 }
 
 fn icmp_client(kind: ICMP) -> Option<Client> {
@@ -51,7 +140,7 @@ fn icmp_client(kind: ICMP) -> Option<Client> {
 static SEQ: AtomicU16 = AtomicU16::new(1);
 
 impl Probers {
-    fn new(cfg: PingCfg) -> anyhow::Result<Self> {
+    pub fn new(cfg: PingCfg, retry: &RetryCfg) -> anyhow::Result<Self> {
         let mk = |insecure: bool| {
             reqwest::Client::builder()
                 .user_agent("NetNOC/3.0")
@@ -62,7 +151,8 @@ impl Probers {
                 .pool_max_idle_per_host(1)
                 .build()
         };
-        Ok(Self { v4: icmp_client(ICMP::V4), v6: icmp_client(ICMP::V6), http: mk(false)?, http_insecure: mk(true)?, cfg })
+        let dns = DnsCache::new(Duration::from_secs(cfg.dns_cache_secs), retry.dns_max_backoff_secs as f64);
+        Ok(Self { v4: icmp_client(ICMP::V4), v6: icmp_client(ICMP::V6), http: mk(false)?, http_insecure: mk(true)?, cfg, dns })
     }
 
     async fn resolve(&self, host: &str) -> Option<IpAddr> {
@@ -70,9 +160,28 @@ impl Probers {
         if let Ok(ip) = host.trim_matches(|c| c == '[' || c == ']').parse::<IpAddr>() {
             return Some(ip);
         }
-        let addrs = timeout(Duration::from_secs(2), tokio::net::lookup_host((host, 0))).await.ok()?.ok()?;
-        let all: Vec<IpAddr> = addrs.map(|a| a.ip()).collect();
-        all.iter().find(|i| i.is_ipv4()).or_else(|| all.first()).copied() // IPv4 primeiro, como o ping do sistema
+        if self.cfg.dns_cache_secs > 0 {
+            match self.dns.get(host, Instant::now()) {
+                Cached::Hit(ip) => return Some(ip),
+                Cached::Wait => return None,
+                Cached::Miss => {}
+            }
+        }
+        let ip = match timeout(Duration::from_secs(2), tokio::net::lookup_host((host, 0))).await {
+            Ok(Ok(addrs)) => {
+                let all: Vec<IpAddr> = addrs.map(|a| a.ip()).collect();
+                all.iter().find(|i| i.is_ipv4()).or_else(|| all.first()).copied()
+                // IPv4 primeiro, como o ping do sistema
+            }
+            _ => None,
+        };
+        if self.cfg.dns_cache_secs > 0 {
+            let n = self.dns.store(host, ip, Instant::now());
+            if ip.is_none() && n.is_power_of_two() {
+                warn!("ping: '{host}' não resolve no DNS ({n}ª vez seguida); novas consultas com intervalo crescente");
+            }
+        }
+        ip
     }
 
     async fn icmp(&self, host: &str) -> Option<f64> {
@@ -118,7 +227,7 @@ impl Probers {
         }
     }
 
-    async fn probe(&self, t: &Target) -> Option<f64> {
+    async fn probe_one(&self, t: &Target) -> Option<f64> {
         match t.kind.as_str() {
             "icmp" | "" => self.icmp(&t.host).await,
             "tcp" => self.tcp(&t.host, t.port).await,
@@ -128,20 +237,42 @@ impl Probers {
     }
 }
 
-pub async fn run(db: Db, mut settings: watch::Receiver<Shared>, reg: Registry, cfg: PingCfg, mut stop: watch::Receiver<bool>) {
-    let flush_every = Duration::from_millis(cfg.flush_ms);
-    let probers = match Probers::new(cfg.clone()) {
+impl Probe for Probers {
+    fn probe<'a>(&'a self, t: &'a Target) -> BoxFuture<'a, Option<f64>> {
+        Box::pin(self.probe_one(t))
+    }
+
+    fn health_error(&self) -> Option<String> {
+        self.v4.is_none().then(|| "sem permissão para ICMP (CAP_NET_RAW)".to_string())
+    }
+}
+
+pub async fn run(db: Db, settings: watch::Receiver<Shared>, reg: Registry, cfg: PingCfg, retry: RetryCfg, stop: watch::Receiver<bool>) {
+    let probers = match Probers::new(cfg.clone(), &retry) {
         Ok(p) => Arc::new(p),
         Err(e) => {
             error!("ping: não foi possível iniciar o cliente HTTP: {e}");
             return;
         }
     };
-    if probers.v4.is_none() {
-        reg.ran("ping", 0.0, Some("sem permissão para ICMP (CAP_NET_RAW)".into()));
+    if let Some(e) = probers.health_error() {
+        reg.ran("ping", 0.0, Some(e));
     }
     // dá tempo à tarefa que recebe as respostas ICMP de subir (a 1ª sonda falhava às vezes)
     tokio::time::sleep(Duration::from_millis(500)).await;
+    run_with(probers, db, settings, reg, cfg, stop).await
+}
+
+/// O agendador em si: dispara cada destino no seu intervalo, junta os resultados e grava em lote.
+pub async fn run_with(
+    probers: Arc<dyn Probe>,
+    db: Db,
+    mut settings: watch::Receiver<Shared>,
+    reg: Registry,
+    cfg: PingCfg,
+    mut stop: watch::Receiver<bool>,
+) {
+    let flush_every = Duration::from_millis(cfg.flush_ms);
     let sem = Arc::new(Semaphore::new(cfg.max_inflight));
     let (res_tx, mut res_rx) = mpsc::unbounded_channel::<(String, f64, Option<f64>)>();
     let mut next_due: HashMap<String, f64> = HashMap::new();
@@ -205,8 +336,7 @@ pub async fn run(db: Db, mut settings: watch::Receiver<Shared>, reg: Registry, c
                     db.write(std::mem::take(&mut buf));
                     debug!("ping: {n} resultado(s) enviados ao banco");
                 }
-                let err = if probers.v4.is_none() { Some("sem permissão para ICMP (CAP_NET_RAW)".to_string()) } else { None };
-                reg.ran("ping", cur.ping_interval_s, err);
+                reg.ran("ping", cur.ping_interval_s, probers.health_error());
             }
         }
     }
@@ -217,4 +347,43 @@ pub async fn run(db: Db, mut settings: watch::Receiver<Shared>, reg: Registry, c
         warn!("ping: {} sonda(s) em voo descartada(s) no encerramento", inflight.len());
     }
     info!("ping: encerrado");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dns_cache_acerto_e_validade() {
+        let c = DnsCache::new(Duration::from_secs(60), 120.0);
+        let t0 = Instant::now();
+        assert_eq!(c.get("exemplo.com", t0), Cached::Miss);
+        let ip: IpAddr = "93.184.216.34".parse().unwrap();
+        c.store("exemplo.com", Some(ip), t0);
+        assert_eq!(c.get("exemplo.com", t0 + Duration::from_secs(59)), Cached::Hit(ip));
+        assert_eq!(c.get("exemplo.com", t0 + Duration::from_secs(61)), Cached::Miss, "expira no TTL");
+    }
+
+    #[test]
+    fn dns_cache_falha_com_backoff_crescente() {
+        let c = DnsCache::new(Duration::from_secs(60), 8.0);
+        let t0 = Instant::now();
+        let mut esperas = vec![];
+        let mut t = t0;
+        for _ in 0..6 {
+            c.store("nao.existe", None, t);
+            // procura o primeiro instante (em passos de 0,25 s) em que volta a consultar o DNS
+            let mut w = 0.0;
+            while c.get("nao.existe", t + Duration::from_secs_f64(w)) == Cached::Wait {
+                w += 0.25;
+            }
+            esperas.push(w);
+            t += Duration::from_secs_f64(w);
+        }
+        assert_eq!(esperas, vec![1.0, 2.0, 4.0, 8.0, 8.0, 8.0], "dobra até o teto");
+        // resolveu: volta ao normal
+        let ip: IpAddr = "10.0.0.1".parse().unwrap();
+        assert_eq!(c.store("nao.existe", Some(ip), t), 0);
+        assert_eq!(c.get("nao.existe", t), Cached::Hit(ip));
+    }
 }

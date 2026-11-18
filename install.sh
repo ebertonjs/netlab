@@ -54,7 +54,12 @@ python3 -m venv venv
 # shellcheck disable=SC1091
 source venv/bin/activate
 pip install --upgrade pip
-pip install -r requirements.txt
+if [ -f requirements.lock ]; then
+  echo "Usando requirements.lock (versões travadas desta instalação)"
+  pip install -r requirements.txt -c requirements.lock
+else
+  pip install -r requirements.txt
+fi
 
 if [ "$1" = "--service" ]; then
   USER_NAME="$(id -un)"

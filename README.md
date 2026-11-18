@@ -5,7 +5,7 @@ Painel de monitoramento de rede **self-hosted** (na interface ele se chama **Net
 ![Python](https://img.shields.io/badge/Python-3.9%2B-blue)
 ![FastAPI](https://img.shields.io/badge/FastAPI-backend-009688)
 ![SQLite](https://img.shields.io/badge/SQLite-embutido-003b57)
-![Versão](https://img.shields.io/badge/vers%C3%A3o-3.12-3b82f6)
+![Versão](https://img.shields.io/badge/vers%C3%A3o-3.13-3b82f6)
 ![Licença](https://img.shields.io/badge/licen%C3%A7a-uso%20gratuito-orange)
 
 ![NetLAB — tema Pro escuro](docs/img/pro-escuro.jpg)

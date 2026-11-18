@@ -1,13 +1,7 @@
 //! netnoc-collector — coletor do NetNOC em Rust.
 //! Assume o ping (ICMP/TCP/HTTP), o MikroTik e o AdGuard Home, gravando no mesmo SQLite do painel.
 //! O resto (API, incidentes, rollups, DHCP, speedtest, DNS, sistema) continua no Python.
-mod agh;
-mod config;
-mod db;
-mod health;
-mod mikrotik;
-mod ping;
-mod settings;
+use netnoc_collector::{agh, config, db, health, mikrotik, ping, settings};
 
 use std::io::IsTerminal;
 use std::path::PathBuf;
@@ -66,6 +60,7 @@ fn main() {
             std::process::exit(2);
         }
     };
+    // log_level já foi validado em Config::load
     let filter = EnvFilter::try_new(&cfg.log_level).unwrap_or_else(|_| EnvFilter::new("info"));
     tracing_subscriber::fmt()
         .with_env_filter(filter)
@@ -96,6 +91,9 @@ async fn wait_signal() {
 async fn run(cfg: config::Config, check: bool) -> Result<()> {
     let hist = cfg.hist_path();
     info!("netnoc-collector {} — banco {} + {}", env!("CARGO_PKG_VERSION"), cfg.db.display(), hist.display());
+    for w in cfg.warnings() {
+        warn!("configuração: {w}");
+    }
     let secrets = Arc::new(settings::Secrets::load(&cfg.key_path()));
 
     // abre e espera o schema (o NetNOC em Python cria as tabelas na primeira execução)
@@ -131,6 +129,7 @@ async fn run(cfg: config::Config, check: bool) -> Result<()> {
 
     let first = settings::parse(&db.settings().await?, &secrets);
     if check {
+        println!("configuração ..... ok (backoff até {} s; DNS em cache por {} s)", cfg.retry.max_backoff_secs, cfg.ping.dns_cache_secs);
         println!("banco ............ ok ({} / {})", cfg.db.display(), hist.display());
         println!("chave ............ {}", if secrets.has_key() { "ok" } else { "não encontrada (senhas cifradas ficarão vazias)" });
         println!("destinos ......... {} (intervalo padrão {} s)", first.targets.len(), first.ping_interval_s);
@@ -181,13 +180,19 @@ async fn run(cfg: config::Config, check: bool) -> Result<()> {
     let reg = health::Registry::default();
     let mut tasks = Vec::new();
     if cfg.modules.ping {
-        tasks.push(tokio::spawn(ping::run(db.clone(), set_rx.clone(), reg.clone(), cfg.ping.clone(), stop_rx.clone())));
+        tasks.push(tokio::spawn(ping::run(db.clone(), set_rx.clone(), reg.clone(), cfg.ping.clone(), cfg.retry.clone(), stop_rx.clone())));
     }
     if cfg.modules.mikrotik {
-        tasks.push(tokio::spawn(mikrotik::run(db.clone(), set_rx.clone(), reg.clone(), stop_rx.clone())));
+        tasks.push(tokio::spawn(mikrotik::run(
+            db.clone(),
+            set_rx.clone(),
+            reg.clone(),
+            cfg.retry.max_backoff_secs as f64,
+            stop_rx.clone(),
+        )));
     }
     if cfg.modules.agh {
-        tasks.push(tokio::spawn(agh::run(db.clone(), set_rx.clone(), reg.clone(), stop_rx.clone())));
+        tasks.push(tokio::spawn(agh::run(db.clone(), set_rx.clone(), reg.clone(), cfg.retry.max_backoff_secs as f64, stop_rx.clone())));
     }
     if tasks.is_empty() {
         warn!("nenhum módulo ativo (modules.ping/mikrotik/agh)");

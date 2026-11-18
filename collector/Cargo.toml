@@ -1,6 +1,6 @@
 [package]
 name = "netnoc-collector"
-version = "3.9.0"
+version = "3.13.0"
 edition = "2021"
 description = "Coletor do NetNOC: ping (ICMP/TCP/HTTP), MikroTik e AdGuard Home, gravando no mesmo SQLite do painel"
 license-file = "../LICENSE"

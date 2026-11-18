@@ -1,6 +1,9 @@
 # /etc/netnoc-collector.toml — configuração do netnoc-collector
 # Variáveis de ambiente têm prioridade: NETNOC_DB, NETNOC_HIST_DB, NETNOC_KEY_FILE,
 # NETNOC_SECRET_KEY, NETNOC_COLLECTOR_LOG, NETNOC_COLLECTOR_MODULES.
+#
+# Validação rigorosa: nome de campo errado ou valor fora da faixa impede a partida com a
+# mensagem do problema (confira com:  netnoc-collector -c ARQUIVO --check).
 
 # netnoc.db do painel (o histórico netnoc-historico.db e a chave netnoc.key ficam ao lado)
 db = "/home/dietpi/netnoc/netnoc/netnoc.db"
@@ -19,9 +22,17 @@ mikrotik = true   # system/resource, system/health e interfaces
 agh = true        # AdGuard Home /control/stats
 
 [ping]
-tick_ms = 200          # precisão do agendador
-flush_ms = 1000        # junta os resultados e grava 1 commit por segundo (poupa o cartão SD)
+tick_ms = 200          # precisão do agendador (50 a 5000)
+flush_ms = 1000        # junta os resultados e grava 1 commit por segundo (poupa o cartão SD; 200 a 60000)
 icmp_timeout_ms = 1000
 tcp_timeout_ms = 2000
 http_timeout_ms = 5000
-max_inflight = 64      # sondas simultâneas no máximo
+max_inflight = 64      # sondas simultâneas no máximo (1 a 1024)
+dns_cache_secs = 60    # reaproveita o IP de um nome por este tempo (0 = resolve a cada sonda)
+
+[retry]
+# Quando o MikroTik/AdGuard não responde, as tentativas se espaçam: intervalo × 2, × 4, × 8…
+# até este teto; no primeiro sucesso voltam ao intervalo normal. O ping NÃO usa backoff
+# (destino fora continua sendo testado no intervalo dele, para a volta ser vista na hora).
+max_backoff_secs = 600       # 30 a 3600
+dns_max_backoff_secs = 120   # nome que não resolve: espera até isto antes de perguntar de novo ao DNS

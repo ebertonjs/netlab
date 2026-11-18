@@ -133,7 +133,7 @@ do_backup() {
   mkdir -p "$BACKUP"
   # banco consistente: o serviço é parado antes da cópia (WAL pendente vai junto)
   svc_stop
-  local f n=0 files=(netnoc.db netnoc.db-wal netnoc.db-shm netnoc.key config.json)
+  local f n=0 files=(netnoc.db netnoc.db-wal netnoc.db-shm netnoc.key config.json requirements.lock)
   if [ "$KEEP_HIST" = 1 ]; then files+=(netnoc-historico.db netnoc-historico.db-wal netnoc-historico.db-shm); fi
   for f in "${files[@]}"; do
     if [ -f "$APPDIR/$f" ]; then cp -p "$APPDIR/$f" "$BACKUP/"; n=$((n + 1)); fi
@@ -180,7 +180,7 @@ wait_up() {
 }
 
 restore_into() {
-  local src="$1" dst="$2" f files=(netnoc.db netnoc.db-wal netnoc.db-shm netnoc.key config.json)
+  local src="$1" dst="$2" f files=(netnoc.db netnoc.db-wal netnoc.db-shm netnoc.key config.json requirements.lock)
   if [ "$KEEP_HIST" = 1 ]; then files+=(netnoc-historico.db netnoc-historico.db-wal netnoc-historico.db-shm); fi
   for f in "${files[@]}"; do
     if [ -f "$src/$f" ]; then cp -p "$src/$f" "$dst/"; fi

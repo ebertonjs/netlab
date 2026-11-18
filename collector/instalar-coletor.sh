@@ -51,6 +51,10 @@ info "NetNOC em $APPDIR (usuário $USER_NAME)"
 
 # ---- arquitetura: e_machine do ELF (offset 18): 0x28 = ARM 32 bits, 0xb7 = AArch64, 0x3e = x86_64
 ARCH_SYS="$(dpkg --print-architecture 2>/dev/null || uname -m)"
+# arquivo que não é programa (ex.: download que trouxe a página "Not Found")
+if [ "$(head -c4 "$SRC" | od -An -tx1 | tr -d ' \n')" != "7f454c46" ]; then
+  fail "$SRC não é um executável ($(wc -c < "$SRC") bytes). O download falhou? Baixe de novo de https://github.com/ebertonjs/netlab/releases/latest"
+fi
 EM="$(od -An -tx1 -j18 -N1 "$SRC" | tr -d ' ')"
 case "$EM" in 28) ARCH_BIN=armhf ;; b7) ARCH_BIN=arm64 ;; 3e) ARCH_BIN=amd64 ;; *) ARCH_BIN="desconhecida($EM)" ;; esac
 case "$ARCH_SYS" in armv7l|armhf) ARCH_SYS=armhf ;; aarch64|arm64) ARCH_SYS=arm64 ;; x86_64|amd64) ARCH_SYS=amd64 ;; esac

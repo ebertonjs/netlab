@@ -1,0 +1,70 @@
+# Compila o netnoc-collector (Rust) para o Raspberry Pi e publica em Releases.
+# Dispara ao criar uma tag de versão (ex.: v3.13) ou manualmente (Actions → Coletor → Run workflow).
+# No Pi:  curl -LO https://github.com/ebertonjs/netlab/releases/latest/download/netnoc-collector-armhf
+name: Coletor
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: collector
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: armv7-unknown-linux-musleabihf,aarch64-unknown-linux-musl
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: collector
+
+      - name: Testes (x86)
+        run: |
+          cargo clippy --all-targets
+          cargo test --locked
+
+      - name: Zig + cargo-zigbuild
+        run: |
+          pip install ziglang==0.13.0
+          cargo install cargo-zigbuild --locked
+
+      - name: Compila armhf (Pi 32 bits) e arm64 (Pi 64 bits)
+        run: |
+          cargo zigbuild --release --locked --target armv7-unknown-linux-musleabihf
+          cargo zigbuild --release --locked --target aarch64-unknown-linux-musl
+          mkdir -p ../dist
+          cp target/armv7-unknown-linux-musleabihf/release/netnoc-collector ../dist/netnoc-collector-armhf
+          cp target/aarch64-unknown-linux-musl/release/netnoc-collector ../dist/netnoc-collector-arm64
+          cd ../dist && sha256sum netnoc-collector-* > SHA256SUMS.txt && ls -l && cat SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: netnoc-collector
+          path: dist/*
+
+      - name: Publica na Release da tag
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          body: |
+            Coletor em Rust (opcional) para o NetNOC. No Raspberry Pi:
+            ```
+            dpkg --print-architecture    # armhf -> netnoc-collector-armhf   |   arm64 -> netnoc-collector-arm64
+            cd PASTA_DO_NETNOC/collector
+            curl -LO https://github.com/${{ github.repository }}/releases/latest/download/netnoc-collector-armhf
+            mv netnoc-collector-armhf netnoc-collector && chmod +x netnoc-collector instalar-coletor.sh
+            ./instalar-coletor.sh ./netnoc-collector
+            ```
+            Novidades: veja o CHANGELOG.md.

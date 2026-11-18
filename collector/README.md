@@ -35,7 +35,21 @@ uname -m                      # armv7l ou  aarch64 (só o kernel)
 
 Usamos **musl estático**: um arquivo só, sem depender da glibc do DietPi. SQLite (`bundled`) e TLS (rustls/ring) já vão dentro. Não há OpenSSL.
 
-## 2. Compilar no seu PC (cross-compile)
+## 2. Baixar pronto (recomendado)
+
+Cada versão do NetNOC publica o coletor já compilado em [Releases](https://github.com/ebertonjs/netlab/releases/latest) (feito pelo GitHub Actions, `.github/workflows/coletor.yml`, depois de rodar os testes). No Pi, na pasta do NetNOC:
+
+```bash
+cd collector
+curl -LO https://github.com/ebertonjs/netlab/releases/latest/download/netnoc-collector-armhf   # ou -arm64
+mv netnoc-collector-armhf netnoc-collector
+chmod +x netnoc-collector instalar-coletor.sh medir.sh
+./instalar-coletor.sh ./netnoc-collector
+```
+
+O `SHA256SUMS.txt` da release confere a integridade (`sha256sum -c`). Para compilar você mesmo, siga abaixo.
+
+## 2b. Compilar no seu PC (cross-compile)
 
 ### Opção A — cargo-zigbuild (recomendada; Linux, WSL2 ou macOS)
 
@@ -65,7 +79,21 @@ cross build --release --target armv7-unknown-linux-musleabihf
 
 Funciona, mas leva uns 20–30 min no Pi 3 e pode faltar RAM no LTO. Se for compilar no Pi, use `CARGO_PROFILE_RELEASE_LTO=thin cargo build --release` e deixe um swap de 1 GB.
 
-Testes (no PC): `cargo test`. Os testes conferem a decifragem das senhas (Fernet igual ao Python), o uptime do RouterOS e a leitura das configurações.
+### Testes (no PC)
+
+```bash
+cargo test                      # 28 testes: unidade + integração
+cargo test -- --ignored         # + ICMP de verdade em 127.0.0.1 (precisa de CAP_NET_RAW ou root)
+```
+
+| Onde | O que cobre |
+|---|---|
+| `src/*` (unidade) | backoff (dobra, teto, jitter, patamares de log), configuração (exemplo do repositório válido, campo desconhecido com linha, faixas, prioridade do ambiente, módulo inválido), cache de DNS com backoff, uptime do RouterOS, decifragem Fernet igual à do Python |
+| `tests/mikrotik_simulado.rs` | MikroTik falso (servidor HTTP local): coleta completa com autenticação, bps entre duas coletas, HTTP 401/500, JSON inválido, timeout, conexão recusada, senha nunca no erro, endereço sem `/rest` duplicado |
+| `tests/adguard_simulado.rs` | AdGuard falso: estatísticas, autenticação só com usuário, falhas |
+| `tests/ping_agendador.rs` | agendador de ping com sonda simulada gravando num SQLite real: intervalos, latência, falha, jitter, destino fora sem backoff, tipo `agent` ignorado, destino removido sai da agenda |
+
+O coletor não faz SNMP (isso continua no Python, pelo net-snmp).
 
 ## 3. Deploy no Pi
 
@@ -105,9 +133,23 @@ Para assumir só uma parte, use `NETNOC_COLLECTOR_MODULES=ping ./instalar-coleto
 | `NETNOC_HIST_DB` | `netnoc-historico.db` ao lado do `netnoc.db` |
 | `NETNOC_KEY_FILE` / `NETNOC_SECRET_KEY` | `netnoc.key` ao lado do `netnoc.db` |
 | `NETNOC_COLLECTOR_LOG` | `info` (`debug` mostra cada lote gravado) |
-| `NETNOC_COLLECTOR_MODULES` | `ping,mikrotik,agh` |
+| `NETNOC_COLLECTOR_MODULES` | `ping,mikrotik,agh` (nome desconhecido = erro) |
 
 Destinos, intervalos, MikroTik e AdGuard continuam sendo configurados **na interface**. O coletor relê o banco a cada 5 s.
+
+**Validação rigorosa:** campo com nome errado no `.toml`, valor fora da faixa (ex.: `tick_ms = 10`) ou módulo desconhecido em `NETNOC_COLLECTOR_MODULES` impedem a partida, com todos os problemas listados e a linha do arquivo. Confira antes de reiniciar o serviço:
+
+```bash
+netnoc-collector -c /etc/netnoc-collector.toml --check
+```
+
+### Quando um equipamento cai (backoff)
+
+| Onde | Comportamento |
+|---|---|
+| MikroTik e AdGuard | a cada falha seguida o intervalo dobra (60 s → 120 → 240 → 480 → 600 s), com ±10% de variação, até `retry.max_backoff_secs`; no primeiro sucesso volta ao normal. O evento "Falha ao coletar…" é gravado **uma vez** por sequência e um "Coleta … restabelecida" na volta; o log só repete na 1ª, 2ª, 4ª, 8ª… falha. |
+| Ping (ICMP/TCP/HTTP) | **sem backoff**: um destino fora continua sendo testado no intervalo dele, senão a volta demoraria a aparecer e a disponibilidade ficaria errada. |
+| DNS dos destinos por nome | o IP fica em cache por `ping.dns_cache_secs`; um nome que não resolve espera 1, 2, 4… s (até `retry.dns_max_backoff_secs`) antes de o DNS ser consultado de novo. |
 
 ## 4. Testar no Pi (antes × depois)
 

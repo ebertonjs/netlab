@@ -1,5 +1,19 @@
 # Histórico de versões
 
+## v3.13 — base mais robusta (coletor e API)
+**Coletor em Rust (`collector/`)**
+- **Backoff exponencial** no MikroTik e no AdGuard: quando o equipamento não responde, as tentativas se espaçam (intervalo × 2, × 4… até `retry.max_backoff_secs`, padrão 600 s, com ±10% de variação) e voltam ao normal no primeiro sucesso. O evento de falha é gravado uma vez por sequência (antes: um por ciclo) e um "restabelecida" na volta; o log só repete em patamares (1ª, 2ª, 4ª, 8ª… falha).
+- **Ping sem backoff** de propósito (destino fora continua sendo testado no intervalo dele); o backoff entra na **resolução de DNS**: IP em cache por `ping.dns_cache_secs` e nome que não resolve espera 1, 2, 4… s antes de nova consulta.
+- **Configuração validada com rigor**: campo desconhecido no `.toml` é erro (com a linha e os nomes válidos), valores fora da faixa são erro em vez de corrigidos em silêncio, módulo desconhecido em `NETNOC_COLLECTOR_MODULES` é erro, e todos os problemas aparecem juntos. Novas opções `ping.dns_cache_secs` e `[retry]`.
+- **Testes**: de 5 para 28 (+1 opcional com ICMP real) — MikroTik e AdGuard simulados por um servidor HTTP local (sucesso, 401, 500, JSON inválido, timeout, conexão recusada), agendador de ping com sonda simulada gravando num SQLite de verdade, backoff, configuração e cache de DNS. `cargo clippy` sem avisos.
+- O crate virou biblioteca + binário (`src/lib.rs`), o que permite os testes de integração em `tests/`.
+
+**API (`netnoc/web/`)**
+- `app.py` (≈1800 linhas, 122 rotas) dividido em **10 roteadores por domínio** (`APIRouter`, o equivalente aos Blueprints do Flask) em `netnoc/web/rotas/` — sistema, métricas, painel, destinos, integrações, alertas, ferramentas, multi-site, autenticação, páginas — e `comum.py`. Cada arquivo importa só o que usa. A tabela de rotas foi comparada antes e depois: idêntica (método, caminho e função).
+
+**Dependências**
+- `cryptography`, `pydantic` e `starlette` presos à versão maior (antes o `cryptography` estava aberto). Para travar tudo como está funcionando no seu Pi: `venv/bin/pip freeze > requirements.lock` — o `install.sh` passa a usar o lock quando ele existe, e o `reinstalar.sh` o guarda junto com o banco e a chave.
+
 ## v3.12 — o NetNOC age (com sua permissão) e volta no tempo
 - **Código reorganizado em módulos**: os arquivos `.py` saíram da raiz para o pacote `netnoc/`, uma pasta por módulo — `nucleo` (banco, segurança, estatísticas, backup), `coleta` (ping, incidentes, MikroTik, AdGuard, SNMP, agentes), `analise` (diagnóstico, narrativa, máquina do tempo, SLA), `alertas`, `bot` (Telegram, IA, ações), `integracoes` (câmeras, Zabbix) e `web` (API). Cada pasta tem um README com o que faz, o histórico de mudanças e as próximas melhorias; `static/` e `agente/` também. O `main.py` da raiz continua sendo o ponto de entrada, então o serviço (`uvicorn main:app`), o `install.sh`, o `reinstalar.sh` e o coletor Rust não mudam. O agente remoto agora fica em `agente/agent.py`.
   - Quem atualiza copiando arquivos (sem `git pull` ou `reinstalar.sh`): depois de copiar, apague os `.py` antigos da raiz, menos `main.py` e `manage.py`.

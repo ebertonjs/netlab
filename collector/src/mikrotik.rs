@@ -1,6 +1,10 @@
 //! MikroTik REST (RouterOS 7): system/resource, system/health e interface.
 //! Grava as mesmas linhas que o _poll_mikrotik_once do Python. A sincronização do DHCP
 //! (promoção de aparelhos) continua no Python.
+//!
+//! Quando o roteador não responde, as tentativas seguem um backoff exponencial (intervalo × 2ⁿ até
+//! `retry.max_backoff_secs`). O evento "Falha ao coletar" é gravado só na primeira falha da sequência
+//! e um "restabelecida" na volta — antes era um evento por ciclo enquanto o roteador estivesse fora.
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -8,6 +12,7 @@ use serde_json::{Map, Value};
 use tokio::sync::watch;
 use tracing::{debug, info, warn};
 
+use crate::backoff::Backoff;
 use crate::db::{Db, Rec};
 use crate::health::{now, safe_err, sleep_until, Registry};
 use crate::settings::{clean_name, num, Integration, Shared};
@@ -56,13 +61,32 @@ fn opt_str(v: Option<&Value>) -> Option<String> {
     }
 }
 
-struct Mt {
+/// Cliente da API REST do MikroTik com o estado necessário para calcular bps (contadores anteriores).
+pub struct Mt {
     secure: reqwest::Client,
     insecure: reqwest::Client,
     prev: HashMap<String, (i64, i64, f64)>,
 }
 
 impl Mt {
+    pub fn new(timeout: Duration) -> Self {
+        let mk = |insecure: bool| {
+            reqwest::Client::builder()
+                .timeout(timeout)
+                .connect_timeout(timeout)
+                .danger_accept_invalid_certs(insecure)
+                .pool_max_idle_per_host(1)
+                .build()
+                .expect("cliente HTTP")
+        };
+        Self { secure: mk(false), insecure: mk(true), prev: HashMap::new() }
+    }
+
+    /// Esquece os contadores (ex.: troca de roteador): a próxima leitura não calcula bps.
+    pub fn reset(&mut self) {
+        self.prev.clear();
+    }
+
     async fn get(&self, cfg: &Integration, path: &str) -> Result<Value, String> {
         let client = if cfg.verify_ssl { &self.secure } else { &self.insecure };
         let r = client
@@ -76,7 +100,8 @@ impl Mt {
         r.json::<Value>().await.map_err(|e| safe_err(&e))
     }
 
-    async fn poll(&mut self, cfg: &Integration) -> (Vec<Rec>, Option<String>) {
+    /// Uma coleta completa. Devolve os registros obtidos (mesmo parciais) e o erro, se houve.
+    pub async fn poll(&mut self, cfg: &Integration) -> (Vec<Rec>, Option<String>) {
         let ts = now();
         let mut recs = Vec::new();
         let res = match self.get(cfg, "system/resource").await {
@@ -151,16 +176,10 @@ fn resource(ts: f64, r: &Map<String, Value>, temperature: Option<f64>) -> Rec {
     }
 }
 
-pub async fn run(db: Db, settings: watch::Receiver<Shared>, reg: Registry, mut stop: watch::Receiver<bool>) {
-    let mk = |insecure: bool| {
-        reqwest::Client::builder()
-            .timeout(Duration::from_secs(6))
-            .danger_accept_invalid_certs(insecure)
-            .pool_max_idle_per_host(1)
-            .build()
-            .expect("cliente HTTP")
-    };
-    let mut mt = Mt { secure: mk(false), insecure: mk(true), prev: HashMap::new() };
+pub async fn run(db: Db, settings: watch::Receiver<Shared>, reg: Registry, max_backoff_s: f64, mut stop: watch::Receiver<bool>) {
+    let mut mt = Mt::new(Duration::from_secs(6));
+    let mut bo = Backoff::new(max_backoff_s);
+    let mut last_target = String::new();
     let mut was_ready = false;
     if !sleep_until(now(), || 3.0, &mut stop).await {
         return;
@@ -169,28 +188,58 @@ pub async fn run(db: Db, settings: watch::Receiver<Shared>, reg: Registry, mut s
         let t0 = now();
         let cfg = settings.borrow().mikrotik.clone();
         let mut err = None;
+        let target = format!("{}:{}", cfg.host, cfg.port);
+        if target != last_target {
+            // outro roteador/porta: recomeça do zero (contadores e backoff)
+            mt.reset();
+            bo.ok();
+            last_target = target;
+        }
         if cfg.ready(true) {
             if !was_ready {
                 info!("mikrotik: coletando de {} a cada {}s", cfg.host, cfg.interval_s);
             }
-            let (recs, e) = mt.poll(&cfg).await;
+            let (mut recs, e) = mt.poll(&cfg).await;
             debug!("mikrotik: {} registro(s)", recs.len());
-            if let Some(e) = &e {
-                warn!("mikrotik: {e}");
-                let mut recs = recs;
-                recs.push(Rec::Event { ts: now(), message: format!("Falha ao coletar dados do MikroTik: {e}"), severity: "Baixa" });
-                db.write(recs);
-            } else {
-                db.write(recs);
+            match &e {
+                Some(msg) => {
+                    let n = bo.fail();
+                    if bo.should_report() {
+                        warn!("mikrotik: {msg} ({n}ª falha seguida; próxima tentativa em {:.0}s)", bo.delay(cfg.interval_s as f64));
+                    } else {
+                        debug!("mikrotik: {msg} ({n}ª falha seguida)");
+                    }
+                    if n == 1 {
+                        recs.push(Rec::Event {
+                            ts: now(),
+                            message: format!("Falha ao coletar dados do MikroTik: {msg}"),
+                            severity: "Baixa",
+                        });
+                    }
+                }
+                None => {
+                    if let Some(n) = bo.ok() {
+                        info!("mikrotik: voltou a responder depois de {n} falha(s)");
+                        recs.push(Rec::Event {
+                            ts: now(),
+                            message: format!("Coleta do MikroTik restabelecida (após {n} tentativa(s) sem resposta)"),
+                            severity: "Info",
+                        });
+                    }
+                }
             }
+            db.write(recs);
             err = e;
         } else {
-            mt.prev.clear();
+            mt.reset();
+            bo.ok();
         }
         was_ready = cfg.ready(true);
         reg.ran("mikrotik", cfg.interval_s as f64, err);
         let s = settings.clone();
-        if !sleep_until(t0, move || s.borrow().mikrotik.interval_s as f64, &mut stop).await {
+        let wait = if bo.fails() > 0 { Some(bo.delay(cfg.interval_s as f64)) } else { None };
+        // sem falha: relê o intervalo a cada segundo (mudança na UI vale na hora); em backoff: espera fixa
+        if !sleep_until(t0, move || wait.unwrap_or_else(|| s.borrow().mikrotik.interval_s as f64), &mut stop).await {
             break;
         }
     }
