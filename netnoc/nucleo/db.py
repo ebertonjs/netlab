@@ -6,8 +6,9 @@ import sqlite3, time, threading, os
 # O histórico é anexado (ATTACH ... AS h) na mesma conexão, então as consultas continuam iguais.
 DB_PATH = os.environ.get("NETNOC_DB", "netnoc.db")
 HIST_PATH = os.environ.get("NETNOC_HIST_DB") or os.path.join(os.path.dirname(os.path.abspath(DB_PATH)), "netnoc-historico.db")
-HIST_TABLES = ("pings", "pings_5m", "pings_1h", "port_checks", "dns_checks", "speedtests", "incidents", "events",
-               "meta", "snmp_samples", "audit_log", "mikrotik_resource", "mikrotik_iface", "agh_stats", "diagnoses")
+HIST_TABLES = ("pings", "pings_5m", "pings_1h", "port_checks", "dns_checks", "incidents", "events",
+               "meta", "audit_log", "mikrotik_resource", "mikrotik_iface", "agh_stats", "diagnoses",
+               "mikrotik_iface_5m", "syslog")
 _lock = threading.RLock()          # único escritor
 _local = threading.local()         # conexões de leitura por thread
 _wconn = None
@@ -73,11 +74,15 @@ CREATE TABLE IF NOT EXISTS h.pings_5m(
     PRIMARY KEY(target, bucket)
 ) WITHOUT ROWID;
 
+CREATE INDEX IF NOT EXISTS h.idx_pings_5m_bucket ON pings_5m(bucket);
+
 CREATE TABLE IF NOT EXISTS h.pings_1h(
     target TEXT, bucket INTEGER, n INTEGER, ok INTEGER,
     lat_sum REAL, lat_max REAL, jit_sum REAL,
     PRIMARY KEY(target, bucket)
 ) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS h.idx_pings_1h_bucket ON pings_1h(bucket);
 
 CREATE TABLE IF NOT EXISTS h.port_checks(
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -91,14 +96,9 @@ CREATE TABLE IF NOT EXISTS h.dns_checks(
     server TEXT, ts REAL, latency REAL, success INTEGER
 );
 
+CREATE INDEX IF NOT EXISTS h.idx_dns_time ON dns_checks(ts);
+
 CREATE INDEX IF NOT EXISTS h.idx_dns_server_ts ON dns_checks(server, ts);
-
-CREATE TABLE IF NOT EXISTS h.speedtests(
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    ts REAL, download REAL, upload REAL, latency REAL
-);
-
-CREATE INDEX IF NOT EXISTS h.idx_speed_ts ON speedtests(ts);
 
 CREATE TABLE IF NOT EXISTS h.incidents(
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -127,20 +127,13 @@ CREATE INDEX IF NOT EXISTS h.idx_events_ts ON events(ts);
 
 CREATE TABLE IF NOT EXISTS h.meta(key TEXT PRIMARY KEY, value TEXT, ts REAL);
 
-CREATE TABLE IF NOT EXISTS h.snmp_samples(
-    ts REAL, device TEXT, key TEXT, value REAL
-);
-
-CREATE INDEX IF NOT EXISTS h.idx_snmp_dev_key_ts ON snmp_samples(device, key, ts);
-
-CREATE INDEX IF NOT EXISTS h.idx_snmp_ts ON snmp_samples(ts);
-
 CREATE TABLE IF NOT EXISTS h.audit_log(
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts REAL, user TEXT, ip TEXT, action TEXT, detail TEXT
 );
 
 CREATE INDEX IF NOT EXISTS h.idx_audit_ts ON audit_log(ts);
+CREATE INDEX IF NOT EXISTS h.idx_audit_user ON audit_log(user, ts);
 
 CREATE TABLE IF NOT EXISTS h.mikrotik_resource(
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -159,6 +152,27 @@ CREATE TABLE IF NOT EXISTS h.mikrotik_iface(
 );
 
 CREATE INDEX IF NOT EXISTS h.idx_mikrotik_iface_ts ON mikrotik_iface(name, ts);
+
+-- v3.14: "última leitura de cada porta" filtra por horário; sem este índice o SQLite varria o
+-- índice (name, ts) inteiro (1,4 milhão de linhas em 30 dias, ~0,7 s no Pi 3 a cada atualização)
+CREATE INDEX IF NOT EXISTS h.idx_mikrotik_iface_time ON mikrotik_iface(ts);
+
+-- v4.3: tráfego das portas em médias de 5 min (o bruto fica só 2 dias; antes, 30 dias = 1,4 milhão de linhas)
+CREATE TABLE IF NOT EXISTS h.mikrotik_iface_5m(
+    name TEXT, bucket INTEGER, n INTEGER,
+    rx_avg REAL, tx_avg REAL, rx_max REAL, tx_max REAL,
+    PRIMARY KEY(name, bucket)
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS h.idx_mikrotik_iface_5m_b ON mikrotik_iface_5m(bucket);
+
+-- v4.3: syslog do MikroTik
+CREATE TABLE IF NOT EXISTS h.syslog(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL, host TEXT, sev TEXT, topics TEXT, msg TEXT
+);
+
+CREATE INDEX IF NOT EXISTS h.idx_syslog_ts ON syslog(ts);
 
 CREATE TABLE IF NOT EXISTS h.agh_stats(
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -182,10 +196,20 @@ def init_db():
         c.executescript(SCHEMA_HIST)
         c.commit()
         _migrate_history(c)
-        cols = [r[1] for r in c.execute("PRAGMA table_info(dhcp_hosts)").fetchall()]
-        if cols and "promoted_target" not in cols:
-            c.execute("ALTER TABLE dhcp_hosts ADD COLUMN promoted_target TEXT")
-            c.commit()
+        from netnoc.nucleo import migracoes      # v4.4: migrações numeradas (PRAGMA user_version de cada arquivo)
+        migracoes.aplicar(c)
+    optimize()
+
+
+def optimize():
+    """Atualiza as estatísticas que o SQLite usa para escolher o índice (barato; roda na partida e a cada hora)."""
+    with _lock:
+        c = _writer()
+        for sch in ("main", "h"):
+            try:
+                c.execute(f"PRAGMA {sch}.optimize")
+            except sqlite3.Error:
+                pass
 
 
 def _migrate_history(c):
@@ -226,6 +250,15 @@ def execute(query, params=()):
         cur = c.execute(query, params)
         c.commit()
         return cur.lastrowid
+
+
+def execute_count(query, params=()):
+    """Como execute, mas devolve quantas linhas foram afetadas (para apagar em lotes)."""
+    with _lock:
+        c = _writer()
+        cur = c.execute(query, params)
+        c.commit()
+        return cur.rowcount
 
 
 def executemany(query, rows):
@@ -300,7 +333,7 @@ def clear_history():
         c = _writer()
         for t in HIST_TABLES:
             if t == "meta":
-                c.execute("DELETE FROM h.meta WHERE key IN ('rollup5_end','rollup1_end')")
+                c.execute("DELETE FROM h.meta WHERE key IN ('rollup5_end','rollup1_end','iface5_end')")
             else:
                 c.execute(f"DELETE FROM h.{t}")
         c.commit()
@@ -330,6 +363,17 @@ def rollup_chunk(src, dst, bucket_s, start, end):
         c.commit()
 
 
+def rollup_iface_chunk(start, end):
+    """Médias e máximos de 5 min do tráfego das portas em [start,end). Idempotente (REPLACE)."""
+    with _lock:
+        c = _writer()
+        c.execute("""INSERT OR REPLACE INTO mikrotik_iface_5m(name,bucket,n,rx_avg,tx_avg,rx_max,tx_max)
+            SELECT name, CAST(ts/300 AS INTEGER)*300, COUNT(*), AVG(rx_bps), AVG(tx_bps), MAX(rx_bps), MAX(tx_bps)
+            FROM mikrotik_iface INDEXED BY idx_mikrotik_iface_time
+            WHERE ts>=? AND ts<? AND rx_bps IS NOT NULL GROUP BY name, CAST(ts/300 AS INTEGER)""", (start, end))
+        c.commit()
+
+
 def prune_old(days, raw_days=7, hourly_days=365):
     now = time.time()
     cutoff = now - days * 86400
@@ -337,8 +381,10 @@ def prune_old(days, raw_days=7, hourly_days=365):
     execute("DELETE FROM pings WHERE ts < ?", (raw_cut,))
     execute("DELETE FROM pings_5m WHERE bucket < ?", (cutoff,))
     execute("DELETE FROM pings_1h WHERE bucket < ?", (now - hourly_days * 86400,))
-    for t in ("port_checks", "dns_checks", "mikrotik_resource", "mikrotik_iface", "agh_stats"):
+    for t in ("port_checks", "dns_checks", "mikrotik_resource", "agh_stats", "syslog"):
         execute(f"DELETE FROM {t} WHERE ts < ?", (cutoff,))
+    execute("DELETE FROM mikrotik_iface_5m WHERE bucket < ?", (cutoff,))
+    # mikrotik_iface (bruto) é podado em lotes por monitor.prune_once, depois de agregado
     execute("DELETE FROM events WHERE ts < ?", (now - max(days, 90) * 86400,))
     execute("DELETE FROM diagnoses WHERE ts < ?", (now - max(days, 90) * 86400,))
     execute("DELETE FROM audit_log WHERE ts < ?", (now - 365 * 86400,))

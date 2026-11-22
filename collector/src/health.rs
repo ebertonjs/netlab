@@ -81,6 +81,14 @@ pub async fn heartbeat(db: Db, reg: Registry, modules: Vec<&'static str>, mut st
 
 /// Mensagem curta sem URL/credencial (equivalente ao _safe_err do Python).
 pub fn safe_err(e: &reqwest::Error) -> String {
+    // certificado fixado recusado: a causa vem lá no fundo da cadeia de erros (rustls)
+    let mut src: Option<&dyn std::error::Error> = std::error::Error::source(e);
+    while let Some(c) = src {
+        if c.to_string().contains("certificado mudou") {
+            return "certificado mudou (impressão digital diferente da salva)".into();
+        }
+        src = c.source();
+    }
     if let Some(s) = e.status() {
         return format!("HTTP {}", s.as_u16());
     }

@@ -91,6 +91,7 @@ pub fn integ(port: u16, user: &str) -> Integration {
         port,
         use_https: false,
         verify_ssl: true,
+        cert_sha256: String::new(),
         username: user.into(),
         password: "segredo".into(),
         interval_s: 60,

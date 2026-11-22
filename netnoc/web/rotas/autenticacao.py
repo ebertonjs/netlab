@@ -57,6 +57,10 @@ def login_ep(data: LoginIn, request: Request):
 
 @router.post("/api/logout")
 def logout_ep(request: Request):
+    st = request.scope.get("state", {})
+    if st.get("user") not in (None, "public", "anon"):
+        db.audit(st["user"], st.get("ip") or (request.client.host if request.client else "?"), "logout", "")
+        st["audited"] = True
     resp = JSONResponse({"ok": True})
     resp.delete_cookie(security.SESSION_COOKIE, path="/")
     return resp

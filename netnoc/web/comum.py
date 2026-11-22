@@ -8,7 +8,7 @@ from netnoc.nucleo import db
 
 
 CFG = monitor.CFG
-APP_VERSION = "3.13"
+APP_VERSION = "4.4"
 STARTED_AT = time.time()
 
 RANGE_SECONDS = {"5m": 300, "1h": 3600, "24h": 86400, "7d": 7 * 86400, "30d": 30 * 86400}
@@ -21,7 +21,10 @@ def actor(request: Request):
 
 def audit(request, action, detail=""):
     u, ip = actor(request)
+    if not ip and request.client:
+        ip = request.client.host
     db.audit(u, ip, action, detail)
+    request.scope.setdefault("state", {})["audited"] = True     # o AuditMiddleware não duplica a linha
 
 
 def since(range_key):

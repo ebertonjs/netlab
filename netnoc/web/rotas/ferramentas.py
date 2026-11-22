@@ -1,4 +1,4 @@
-"""Ferramentas: traceroute, IPv4 × IPv6, descoberta, certificados e speedtest."""
+"""Ferramentas: traceroute, IPv4 × IPv6, descoberta e certificados."""
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
@@ -7,15 +7,6 @@ from netnoc.nucleo import db
 from netnoc.web.comum import audit, need_admin
 
 router = APIRouter()
-
-
-@router.post("/api/speedtest/run")
-def speedtest_run(request: Request):
-    audit(request, "speedtest")
-    try:
-        return monitor.run_speedtest()
-    except RuntimeError as e:
-        raise HTTPException(409, str(e))
 
 
 # ------------------------------------------------------------ ferramentas

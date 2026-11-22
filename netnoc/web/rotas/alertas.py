@@ -59,13 +59,23 @@ class AiBotIn(BaseModel):
     diary_time: str = "07:00"
     actions: bool = False
     new_devices: bool = True
+    actions_ports: bool = False
+    actions_reboot: bool = False
+    revert_min: int = 5
+    restart_all: List[str] = ["mikrotik", "dvr"]
 
 
 @router.get("/api/settings/aibot")
 def get_aibot_ep():
     tg = monitor.get_telegram()
     return {**security.mask_cfg(aibot.get_cfg(), aibot.SECRET), "status": {k: v for k, v in aibot.status().items() if k != "thread"},
-            "telegram_ready": bool(tg.get("bot_token") and tg.get("chat_id"))}
+            "telegram_ready": bool(tg.get("bot_token") and tg.get("chat_id")),
+            "sudo_ok": _sudo_ok()}
+
+
+def _sudo_ok():
+    from netnoc.bot import actions
+    return actions.can_sudo("systemctl", "reboot") and actions.can_sudo("systemctl", "restart", "netnoc")
 
 
 @router.post("/api/settings/aibot")

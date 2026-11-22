@@ -181,8 +181,6 @@ def _failing_now():
     with monitor._state_lock:
         consec = {k: list(v) for k, v in monitor._consec.items()}
     for n, t in targets.items():
-        if t.get("type") == "agent":
-            continue
         if ("offline", n) in active or consec.get(n, [0, 0])[0] > 0:
             out.append(t)
     return out
@@ -254,7 +252,7 @@ def investigate(kind, target_names=(), traceroute=True):
             failing.append(by_name[n])
     f_local = [f["name"] for f in failing if is_private(f["host"])]
     f_public = [f["name"] for f in failing if not is_private(f["host"])]
-    n_local = sum(1 for t in targets if is_private(t["host"]) and t.get("type") != "agent")
+    n_local = sum(1 for t in targets if is_private(t["host"]))
 
     # evidências legíveis
     mt_up = bool(MT and MT.get("reachable"))
@@ -331,6 +329,15 @@ def investigate(kind, target_names=(), traceroute=True):
             if not MT:
                 conf = "media"
             tips = ["Ligue para a operadora e informe o horário de início", "O NetNOC já guardou o registro para o seu histórico"]
+        # v4.3: o motivo que o próprio RouterOS registrou (syslog), quando chega
+        try:
+            from netnoc.coleta import syslog
+            lg = syslog.wan_reason_near(time.time() - 300, window=420)
+            if lg:
+                text += f" Log do MikroTik às {_hm(lg['ts'])}: {lg['reason']} (\"{lg['msg'][:100]}\")."
+                add(False, f"syslog do MikroTik: {lg['msg'][:100]}")
+        except Exception:
+            pass
     elif refs_ok and dns_sys is False:
         if dns_pub is not None:
             cause, conf, title = "dns_local", "alta", "DNS da rede fora"
@@ -356,10 +363,13 @@ def investigate(kind, target_names=(), traceroute=True):
         r_avg = [s["avg"] for s in rq if s["avg"] is not None]
         r_bad = (sum(s["loss"] for s in rq) / max(1, len(rq)) > 0) or (r_avg and max(r_avg) > monitor.THRESH["ping_ms"])
         sat = None
+        cap = None
         if MT and MT.get("wan_rx_bps"):
-            sp = db.query("SELECT download FROM speedtests WHERE download IS NOT NULL ORDER BY ts DESC LIMIT 1")
-            if sp and sp[0]["download"]:
-                sat = MT["wan_rx_bps"] / (sp[0]["download"] * 1e6)
+            # v4.0: a capacidade do link é o maior download já visto na WAN em 30 dias (sem speedtest)
+            pk = monitor.wan_peak(30 * 86400)
+            cap = pk and pk.get("rx_bps")
+            if cap and cap >= 5e6 and MT["wan_rx_bps"] >= 2e6:
+                sat = MT["wan_rx_bps"] / cap
         if gq.get("loss", 0) >= 10 or (gq.get("avg") or 0) > 20:
             cause, conf, title = "lan_quality", "alta", "Problema dentro da sua rede"
             text = (f"A perda/latência já aparece no gateway ({_n(gq.get('avg'))} ms, perda {_n(gq.get('loss'), 0)}%): "
@@ -368,8 +378,8 @@ def investigate(kind, target_names=(), traceroute=True):
             tips = ["Se o servidor está no Wi-Fi, prefira cabo", "Veja a CPU do roteador e se algum aparelho está saturando a rede"]
         elif sat is not None and sat >= 0.8:
             cause, conf, title = "saturation", "alta", "Internet saturada"
-            text = (f"O link está no limite: download atual {_n(MT['wan_rx_bps'] / 1e6)} Mbps, perto dos "
-                    f"{_n(sp[0]['download'])} Mbps medidos no último speedtest. A lentidão vem do uso da banda.")
+            text = (f"O link está no limite: download atual {_n(MT['wan_rx_bps'] / 1e6)} Mbps, perto do maior já visto "
+                    f"na WAN em 30 dias ({_n(cap / 1e6)} Mbps). A lentidão vem do uso da banda.")
             tips = ["Veja quem está usando a banda (downloads, atualizações, câmeras na nuvem)"]
         elif r_bad:
             cause, conf, title = "isp_quality", "media", "Operadora instável"

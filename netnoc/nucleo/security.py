@@ -240,7 +240,7 @@ def register_fail(ip, user=""):
         _fails.setdefault((ip, None), []).append(now)
 
 
-# --------------------------------------------------------------- tokens agent
+# --------------------------------------------------------------- tokens (Prometheus)
 def new_token():
     return secrets.token_urlsafe(32)
 
@@ -260,12 +260,27 @@ SESSION_TTL = 12 * 3600
 SESSION_TTL_LONG = 30 * 86400
 
 
+_skey = None
+
+
 def _session_key():
-    k = db.get_setting("session_secret", "")
-    if not k:
+    """Chave HMAC dos cookies de sessão. Fica cifrada em repouso (v3.14) e em cache na memória."""
+    global _skey
+    if _skey:
+        return _skey
+    raw = db.get_setting("session_secret", "")
+    if not raw:
         k = secrets.token_hex(32)
-        db.set_setting("session_secret", k)
-    return k.encode()
+        db.set_setting("session_secret", encrypt(k))
+    elif raw.startswith(ENC_PREFIX):
+        k = decrypt(raw)
+        if not k:      # chave trocada/perdida: não sobrescreve o valor salvo; sessões novas valem até reiniciar
+            print("[segurança] não deu para decifrar session_secret (netnoc.key mudou?) — usando chave temporária", flush=True)
+            k = secrets.token_hex(32)
+    else:
+        k = raw
+    _skey = k.encode()
+    return _skey
 
 
 def _fp(user):
@@ -328,16 +343,15 @@ def _cookie_from(hdr):
 # ---------------------------------------------------------------- middleware
 AUTH_OFF = os.environ.get("NETNOC_AUTH", "on").lower() == "off"
 PUBLIC_PATHS = {"/healthz", "/status", "/status.html", "/status.js", "/api/public/status",
-                "/login", "/login.js", "/api/login", "/api/loginfo", "/style.css", "/theme-grafana.css",
+                "/login", "/login.js", "/api/login", "/api/loginfo",
                 "/glass/login.css", "/glass/fonts.css", "/glass/fonts/inter-latin-400-normal.woff2",
                 "/glass/fonts/inter-latin-500-normal.woff2", "/glass/fonts/inter-latin-600-normal.woff2",
                 "/glass/fonts/inter-latin-700-normal.woff2",
                 "/manifest.webmanifest", "/sw.js", "/icon-192.png", "/icon-512.png", "/favicon.ico"}
-AGENT_PREFIX = "/api/agent/"
 METRICS_PATH = "/metrics"
 ADMIN_ONLY_METHODS = {"POST", "PUT", "DELETE", "PATCH"}
 # POSTs liberados para viewer (leituras que usam POST)
-VIEWER_POST_OK = {"/api/logout"}
+VIEWER_POST_OK = {"/api/logout", "/api/me/prefs"}
 
 CSP = ("default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; "
        "script-src 'self'; connect-src 'self'; media-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
@@ -406,11 +420,6 @@ class AuthMiddleware:
                 msg["headers"] = list(msg["headers"]) + [h for h in SEC_HEADERS if h[0] not in names]
             await send(msg)
 
-        # agentes remotos: Bearer próprio (validado no endpoint)
-        if path.startswith(AGENT_PREFIX):
-            scope["state"]["user"] = "agent"
-            scope["state"]["role"] = "agent"
-            return await self.app(scope, receive, send_sec)
         if path in PUBLIC_PATHS:
             scope["state"]["user"], scope["state"]["role"] = "public", "public"
             return await self.app(scope, receive, send_sec)
@@ -452,6 +461,10 @@ class AuthMiddleware:
                 # navegadores: sem desafio Basic (o front redireciona para /login); curl/agentes continuam com Basic
                 extra = [] if (browser or "x-netnoc" in hdrs) else [(b"www-authenticate", b'Basic realm="NetNOC", charset="UTF-8"')]
                 return await _send_plain(send, 401, '{"detail":"Autenticação necessária"}', extra)
+        # quem é (a auditoria lê isto também quando a requisição é recusada abaixo)
+        scope["state"]["user"] = user
+        scope["state"]["role"] = role
+        scope["state"]["ip"] = client
         # CSRF: mutações exigem cabeçalho customizado + origem igual
         if method in ADMIN_ONLY_METHODS:
             if hdrs.get("x-netnoc") != "1":
@@ -463,7 +476,4 @@ class AuthMiddleware:
                     return await _send_plain(send, 403, '{"detail":"CSRF: origem inválida"}')
             if role != "admin" and path not in VIEWER_POST_OK:
                 return await _send_plain(send, 403, '{"detail":"Somente administradores"}')
-        scope["state"]["user"] = user
-        scope["state"]["role"] = role
-        scope["state"]["ip"] = client
         return await self.app(scope, receive, send_sec)

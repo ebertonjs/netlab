@@ -1,5 +1,5 @@
 """Cadastro de destinos e servidores DNS, aparelhos do DHCP."""
-from typing import List, Optional
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
@@ -40,7 +40,6 @@ class TargetIn(BaseModel):
     port: Optional[int] = None
     expect_status: Optional[int] = None
     verify_ssl: Optional[bool] = None
-    sites: Optional[List[str]] = None
     group: Optional[str] = None
 
 
@@ -60,8 +59,6 @@ def create_target(item: TargetIn, request: Request):
         extra["expect_status"] = item.expect_status
     if item.verify_ssl is not None:
         extra["verify_ssl"] = item.verify_ssl
-    if item.sites:
-        extra["sites"] = item.sites
     if item.group and item.group.strip():
         extra["group"] = item.group.strip()
     if item.interval:

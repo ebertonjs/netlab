@@ -3,11 +3,11 @@ import json, os, time
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import PlainTextResponse, Response
+from fastapi.responses import JSONResponse, PlainTextResponse, Response
 from pydantic import BaseModel
 
 from netnoc.coleta import monitor
-from netnoc.nucleo import backup, db, security, stats
+from netnoc.nucleo import backup, db, guarda, security, stats
 from netnoc.web.comum import APP_VERSION, audit, need_admin, STARTED_AT
 from netnoc.web.rotas.ferramentas import certs_ep
 
@@ -16,13 +16,50 @@ router = APIRouter()
 
 @router.get("/healthz")
 def healthz():
-    return {"ok": True}
+    """Público e barato. 503 quando o banco não responde ou um laço essencial parou: o
+    netnoc-watchdog.timer reinicia o serviço depois de 3 falhas seguidas."""
+    ok, det = guarda.health()
+    return JSONResponse({"ok": ok, "problems": det["problems"]}, status_code=200 if ok else 503)
 
 
 @router.get("/api/me")
 def me(request: Request):
     st = request.scope.get("state", {})
     return {"user": st.get("user"), "role": st.get("role"), "version": APP_VERSION}
+
+
+# ---------------------------------------------------------------- preferências por usuário (v3.14)
+_PREF_KEYS = {"home"}
+
+
+def _pref_key(request: Request):
+    u = (request.scope.get("state", {}).get("user") or "anon")[:40]
+    return "ui_prefs:" + u
+
+
+@router.get("/api/me/prefs")
+def prefs_get(request: Request):
+    """Arrumação da página inicial (ordem, blocos recolhidos/escondidos) do usuário logado."""
+    try:
+        return json.loads(db.get_setting(_pref_key(request), "{}") or "{}")
+    except ValueError:
+        return {}
+
+
+@router.post("/api/me/prefs")
+async def prefs_set(request: Request):
+    """Liberado também para o perfil visualizador: só mexe nas preferências da própria pessoa."""
+    try:
+        data = await request.json()
+    except ValueError:
+        raise HTTPException(400, "JSON inválido")
+    if not isinstance(data, dict) or set(data) - _PREF_KEYS:
+        raise HTTPException(400, "Preferência desconhecida")
+    raw = json.dumps(data, separators=(",", ":"))
+    if len(raw) > 4000:
+        raise HTTPException(400, "Preferências grandes demais")
+    db.set_setting(_pref_key(request), raw)
+    return {"ok": True}
 
 
 @router.get("/api/settings")
@@ -136,10 +173,41 @@ def users_del(name: str, request: Request):
 
 
 @router.get("/api/audit")
-def audit_list(request: Request, limit: int = 100):
+def audit_list(request: Request, limit: int = 100, user: str = "", q: str = "", hours: float = 0, kind: str = ""):
+    """Registro de auditoria com filtros: usuário exato, texto na ação/detalhe, últimas N horas e
+    tipo (login = entradas/saídas/falhas; negado = 403/erros; config = o resto)."""
     if request.scope["state"].get("role") != "admin":
         raise HTTPException(403, "Somente administradores")
-    return db.query("SELECT * FROM audit_log ORDER BY ts DESC LIMIT ?", (max(1, min(limit, 1000)),))
+    where, args = [], []
+    if user:
+        where.append("user = ?"); args.append(user[:40])
+    if q:
+        where.append("(action LIKE ? OR detail LIKE ?)"); args += [f"%{q[:60]}%"] * 2
+    if hours and hours > 0:
+        where.append("ts >= ?"); args.append(time.time() - min(hours, 24 * 400) * 3600)
+    if kind == "login":
+        where.append("action IN ('login', 'login_falhou', 'logout')")
+    elif kind == "negado":
+        where.append("(detail LIKE 'negado%' OR detail LIKE 'erro%' OR action = 'login_falhou')")
+    elif kind == "config":
+        where.append("action NOT IN ('login', 'login_falhou', 'logout')")
+    sql = "SELECT * FROM audit_log" + (" WHERE " + " AND ".join(where) if where else "") + " ORDER BY ts DESC LIMIT ?"
+    return db.query(sql, tuple(args) + (max(1, min(limit, 1000)),))
+
+
+@router.get("/api/audit/users")
+def audit_users(request: Request):
+    need_admin(request)
+    return [r["user"] for r in db.query("SELECT DISTINCT user FROM audit_log WHERE ts >= ? ORDER BY user",
+                                         (time.time() - 90 * 86400,))]
+
+
+@router.get("/api/security/secrets")
+def secrets_inventory(request: Request):
+    """Quais segredos existem e se estão cifrados em repouso (nunca devolve os valores)."""
+    need_admin(request)
+    from netnoc.nucleo import cofre
+    return cofre.inventory()
 
 
 # ---------------------------------------------------- backup / restauração
@@ -161,6 +229,53 @@ def restore_post(data: dict, request: Request):
     stats.cache_clear()
     audit(request, "restore", ",".join(applied))
     return {"ok": True, "applied": applied}
+
+
+# ---------------------------------------------- rede de segurança (v4.2)
+class GuardaIn(BaseModel):
+    backup_enabled: bool = True
+    backup_time: str = "03:30"
+    backup_hist: bool = False
+    hc_url: str = ""
+
+
+@router.get("/api/settings/guarda")
+def guarda_get(request: Request):
+    need_admin(request)
+    from netnoc.coleta import monitor
+    tg = monitor.get_telegram()
+    key = security._KEY_FILE
+    return {**security.mask_cfg(guarda.get_cfg(), guarda.SECRET), "last_backup": guarda.last_backup(),
+            "hc": guarda.hc_status(), "telegram_ok": bool(tg["bot_token"] and tg["chat_id"]),
+            "key_path": os.path.abspath(key) if not os.environ.get("NETNOC_SECRET_KEY") else None}
+
+
+@router.post("/api/settings/guarda")
+def guarda_set(data: GuardaIn, request: Request):
+    need_admin(request)
+    old = guarda.get_cfg()
+    new = data.dict()
+    if new["hc_url"] == security.MASK:
+        new["hc_url"] = old["hc_url"]
+    try:
+        guarda.set_cfg(new)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    audit(request, "guarda", f"backup {'on' if new['backup_enabled'] else 'off'} {new['backup_time']}, vigia {'on' if new['hc_url'] else 'off'}")
+    if new["hc_url"]:
+        ok, det = guarda.health()
+        guarda.hc_ping(ok, "; ".join(det["problems"]))        # já testa a URL
+    return {"ok": True, "hc": guarda.hc_status()}
+
+
+@router.post("/api/backup/run")
+def backup_run(request: Request):
+    need_admin(request)
+    audit(request, "backup-telegram")
+    r = guarda.run_backup("manual")
+    if not r["ok"]:
+        raise HTTPException(400, r["error"])
+    return r
 
 
 # -------------------------------------------------------------- Prometheus
@@ -214,8 +329,7 @@ def metrics_token(request: Request):
 
 
 # ------------------------------------------------------------ aparência (skins)
-UI_SKINS = {"pro": ("dark", "light"), "glass": ("dark", "light"), "terminal": ("verde", "ambar", "ciano"),
-            "grafana": ("dark", "light"), "material": ("light", "dark"), "lagoa": ("lagoa", "noite")}
+UI_SKINS = {"pro": ("dark", "light", "auto")}      # v4.0: um tema só (escuro, claro ou automático pelo horário)
 UI_DEFAULT = {"skin": "pro", "mode": "dark", "accent": "#6750a4"}
 
 
@@ -226,6 +340,8 @@ def ui_get():
         d = dict(UI_DEFAULT, **json.loads(db.get_setting("ui_default", "{}") or "{}"))
     except Exception:
         d = dict(UI_DEFAULT)
+    if d.get("skin") not in UI_SKINS or d.get("mode") not in UI_SKINS["pro"]:      # tema antigo (v3) → Pro
+        d = {"skin": "pro", "mode": "light" if d.get("mode") == "light" else "dark", "accent": d.get("accent", "#6750a4")}
     return d
 
 
@@ -245,31 +361,6 @@ def ui_set(item: UiIn, request: Request):
     db.set_setting("ui_default", json.dumps({"skin": item.skin, "mode": item.mode, "accent": item.accent.lower()}))
     audit(request, "ui-default", f"{item.skin}/{item.mode}")
     return {"ok": True}
-
-
-class SpeedAutoIn(BaseModel):
-    enabled: bool
-    time: str = "04:30"
-
-
-@router.get("/api/settings/speedtest")
-def speed_auto_get():
-    return monitor.get_speedtest_auto()
-
-
-@router.post("/api/settings/speedtest")
-def speed_auto_set(item: SpeedAutoIn, request: Request):
-    try:
-        monitor.set_speedtest_auto(item.enabled, item.time)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    audit(request, "speedtest-auto", f"{item.enabled} {item.time}")
-    return {"ok": True}
-
-
-@router.get("/api/health/workers")
-def workers_ep():
-    return monitor.worker_health()
 
 
 @router.get("/api/system")

@@ -119,16 +119,6 @@ def _home_agh():
             "top_blocked": top.get("blocked", [])[:3], "ts": st.get("ts")}
 
 
-@router.get("/api/story")
-def story_ep(hours: int = 48):
-    return story.story(max(1, min(hours, 24 * 30)))
-
-
-@router.get("/api/diagnoses")
-def diagnoses_ep(hours: int = 48):
-    return diagnose.recent(max(1, min(hours, 24 * 90)), 200)
-
-
 class DiagIn(BaseModel):
     target: Optional[str] = None
 
@@ -167,7 +157,6 @@ def home_ep():
             return None
     now = time.time()
     slow = safe(_home_slow) or {}
-    sp = db.query("SELECT ts, download, upload, latency FROM speedtests ORDER BY ts DESC LIMIT 1")
     last_out = db.query("SELECT target, started_ts, resolved_ts FROM incidents WHERE type IN ('offline','local') "
                         "ORDER BY started_ts DESC LIMIT 1")
     active_out = [k for k in monitor._active_incidents if k[0] in _OUTAGE_TYPES]
@@ -193,7 +182,7 @@ def home_ep():
         "story": safe(_story),
         "kpi": {**{k: slow.get(k) for k in ("up_today", "up_7d", "up_30d", "month_incidents", "month_mttr_s")},
                 "public_ip": db.get_meta("public_ip"), "public_ip_since": float(ip_since) if ip_since else None,
-                "speedtest": sp[0] if sp else None, "speedtest_auto": monitor.get_speedtest_auto(), "quiet": quiet},
+                "wan_peak": safe(lambda: monitor.wan_peak(86400)), "quiet": quiet},
         "heat": slow.get("heat"),
         "avail": safe(_home_avail),
         "net": safe(_home_network),

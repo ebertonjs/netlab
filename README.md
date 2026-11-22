@@ -1,11 +1,11 @@
 # 🛰️ NetLAB
 
-Painel de monitoramento de rede **self-hosted** (na interface ele se chama **NetNOC**; o nome é configurável), feito para rodar num Raspberry Pi (ou qualquer Linux) e ficar aberto num tablet na parede, numa TV ou no PC. Ping, DNS, incidentes, MikroTik, AdGuard, topologia, SLA, câmeras do DVR e modo TV — tudo num processo leve, com SQLite embutido e sem depender de serviço externo.
+Painel de monitoramento de rede **self-hosted** (na interface ele se chama **NetNOC**; o nome é configurável), feito para rodar num Raspberry Pi (ou qualquer Linux) e ficar aberto num tablet na parede, numa TV ou no PC. Ping, DNS, incidentes com a causa, MikroTik, AdGuard, mapa da rede, SLA, câmeras do DVR e Modo TV — tudo num processo leve, com SQLite embutido e sem depender de serviço externo. A v4.0 enxugou o projeto para o que um NOC doméstico/pequeno usa de verdade (veja o [CHANGELOG](CHANGELOG.md)).
 
 ![Python](https://img.shields.io/badge/Python-3.9%2B-blue)
 ![FastAPI](https://img.shields.io/badge/FastAPI-backend-009688)
 ![SQLite](https://img.shields.io/badge/SQLite-embutido-003b57)
-![Versão](https://img.shields.io/badge/vers%C3%A3o-3.13-3b82f6)
+![Versão](https://img.shields.io/badge/vers%C3%A3o-4.1-3b82f6)
 ![Licença](https://img.shields.io/badge/licen%C3%A7a-uso%20gratuito-orange)
 
 ![NetLAB — tema Pro escuro](docs/img/pro-escuro.jpg)
@@ -15,39 +15,40 @@ Painel de monitoramento de rede **self-hosted** (na interface ele se chama **Net
 ## ✨ Destaques
 
 - **Ping em tempo real** por destino — latência, jitter e perda, com sparkline e disponibilidade por hora
-- Checks **ICMP, TCP e HTTP/HTTPS** (código esperado e validade do certificado) e **multi-site** com agente leve para filiais
+- Checks **ICMP, TCP e HTTP/HTTPS** (código esperado e validade do certificado)
 - **Incidentes automáticos** que abrem e fecham sozinhos (offline, perda, latência, jitter, DNS lento, CPU/temperatura, câmera sem vídeo, HD do DVR). Queda local vira **um único alerta** em vez de dezenas
 - **Notificações** por Telegram, Discord, webhook assinado (HMAC), e-mail e navegador, com janelas de manutenção — no Telegram, a perda de vídeo chega com a **última foto da câmera**
-- **6 temas que mudam a interface inteira** (o padrão é o **Pro**, um console de operações escuro/claro), escolhidos por aparelho, com tamanho ajustável (Normal / Compacta / Mínima)
-- **Página inicial completa**: indicadores (disponibilidade hoje/7 d/30 d, IP público, último speedtest, tempo sem quedas), disponibilidade de cada destino em blocos de 30 min, portas do MikroTik, aparelhos novos na rede, fotos das câmeras, AdGuard, DNS e saúde do servidor
+- **Visual Pro**: console de operações escuro, claro ou **automático** (escuro das 18h às 7h), com tamanho ajustável (Normal / Compacta / Mínima)
+- **Página inicial que conta o que está acontecendo**: estado da rede e a causa no topo, 4 números ao vivo, linha do tempo só quando há problema, destinos agrupados com os que estão com problema primeiro e blocos de detalhes que cada usuário arruma
 - **Mapa da rede em caixas**, estilo NOC: grupos de equipamentos ligados por linhas com pacotes animados, causa raiz em vermelho e dependentes como "isolados"
 - **Diagnóstico automático da causa**: quando algo cai, o NetNOC investiga sozinho (gateway, internet, DNS, MikroTik/PPPoE/WAN, quedas simultâneas, traceroute) e diz se foi a operadora, energia, um aparelho, o DNS ou a sua rede — com evidências
 - **A rede contada**: a página inicial abre com uma frase e a linha do tempo dos episódios com a causa de cada um, e o diário da rede chega todo dia no Telegram
-- **Ações pelo Telegram com confirmação**: reiniciar o PPPoE, acordar um PC (Wake-on-LAN), bloquear um aparelho; aviso de aparelho novo na rede e quem está usando a banda agora
+- **Ações pelo Telegram com confirmação**, por comando ou em português pela IA: reiniciar ou desligar o PPPoE, desligar/ligar uma porta do MikroTik (com volta automática agendada no próprio roteador), reiniciar MikroTik, DVR, servidor ou "tudo", fotos das câmeras na hora, acordar um PC, bloquear um aparelho
 - **Máquina do tempo**: arraste a régua do mapa e veja a rede como estava em qualquer momento dos últimos 7 dias
 - **Bot no Telegram** com IA opcional (Gemini ou Groq, cota grátis): pergunte "como está o ping pro Google?" e receba o relatório
 - **Modo TV** com rodízio de cenas: visão geral, mostradores, mapa da rede, equipamentos, últimas 24 h e câmeras
-- **Speedtest automático** diário no horário que você escolher
+- **Velocidade real da internet** pelo pico de tráfego da porta WAN do MikroTik (hoje, 7 e 30 dias), sem gastar banda
 - **Câmeras do DVR Intelbras** (MHDX, API compatível Dahua) **ao vivo só enquanto alguém assiste** — roda até no Raspberry Pi 3
-- **Integrações**: MikroTik (REST), AdGuard Home, SNMP, Zabbix, agentes remotos
-- **Comparação de DNS**, speedtest, ferramentas (traceroute, portas, certificados, varredura de rede)
+- **Integrações**: MikroTik (REST), AdGuard Home e DVR Intelbras
+- **Comparação de DNS** e ferramentas (traceroute, IPv4 × IPv6, certificados, varredura de rede)
 - **SLA**, MTTR/MTBF, heatmap dia × hora, relatório imprimível, página de status pública opcional e métricas **Prometheus**
-- **Login com sessão**, perfis admin/visualizador, proteção CSRF e CSP, credenciais cifradas no banco
+- **Login com sessão**, perfis admin/visualizador, proteção CSRF e CSP, senhas e tokens cifrados no banco (com troca de chave) e **auditoria** de toda alteração
 - **Tudo configurável pela interface**, sem editar arquivo
 
 ---
 
 ## 🏠 Página inicial
 
-Além dos cards de cada destino, a página inicial mostra tudo o que importa sem precisar clicar. Os blocos de integrações que você não usa (MikroTik, AdGuard, DVR) simplesmente não aparecem.
+![Página inicial](docs/img/pro-escuro.jpg)
 
-![Página inicial — blocos de resumo](docs/img/pagina-inicial.jpg)
+1. **Estado e causa** — uma frase ("Tudo estável há 3 h" ou "Impressora fora do ar há 1 min · Causa provável: …") com **Diagnosticar agora**, **Ver no mapa** e **Incidentes**, mais 4 números: disponível hoje, latência e perda agora (ao vivo) e incidentes.
+2. **O que aconteceu** — a linha do tempo com a causa de cada queda. Aberta quando há problema; com tudo bem, vira uma linha só.
+3. **Destinos** — agrupados em Internet e Rede local, **com problema primeiro**.
+4. **Detalhes** — disponibilidade por destino (24 h em blocos de 30 min), MikroTik (portas, **pico da WAN** e aparelhos na rede), DNS, AdGuard, servidor, câmeras e mapa de incidentes 7 dias × 24 h. Arraste ⋮⋮ para reordenar, clique no título para recolher, **Personalizar** para esconder. A arrumação fica salva por usuário, igual em qualquer aparelho. Blocos de integrações que você não usa não aparecem.
 
-1. **Indicadores** — disponibilidade hoje / 7 d / 30 d, IP público (e há quanto tempo não muda), último speedtest, tempo sem quedas e incidentes do mês.
-2. **Disponibilidade por destino** — 24 h em blocos de 30 min: ok, lento, fora do ar ou isolado.
-3. **MikroTik** — cada porta com status e tráfego (o nome vem do comentário da interface) e os **aparelhos na rede**, com os novos do dia em destaque.
-4. **Câmeras** — uma foto por minuto, só com a página aberta; clique para ver ao vivo.
-5. **AdGuard**, **DNS** e **servidor** (CPU, memória, temperatura, disco), mais o **mapa de incidentes** 7 dias × 24 h na coluna da esquerda.
+![Blocos de detalhes](docs/img/pagina-inicial.jpg)
+
+Falhas da própria coleta (o MikroTik não respondeu, por exemplo) aparecem como um aviso discreto no topo.
 
 ---
 
@@ -67,28 +68,15 @@ Além dos cards de cada destino, a página inicial mostra tudo o que importa sem
 
 ---
 
-## 🎨 Temas
+## 🎨 Visual
 
-Cada aparelho escolhe o seu em **Configurações → Aparência**. O admin define o padrão do servidor, e uma URL pode fixar o tema numa tela de quiosque.
+Um tema só, o **Pro**: console de operações com menu lateral, superfícies planas, um azul de destaque e cores só para estado; números tabulares e IPs em monoespaçada. Ícones [Lucide](https://lucide.dev).
 
-| **Pro** (padrão, escuro / claro) | **Lagoa** |
+| Escuro | Claro |
 |---|---|
-| ![Pro claro](docs/img/pro-claro.jpg) | ![Lagoa](docs/img/lagoa.jpg) |
-| **Glass** | **NOC Terminal** |
-| ![Glass](docs/img/glass-escuro.jpg) | ![NOC Terminal](docs/img/terminal.jpg) |
-| **Grafana / Zabbix** | **Material You** |
-| ![Grafana/Zabbix](docs/img/grafana.jpg) | ![Material You](docs/img/material.jpg) |
+| ![Pro escuro](docs/img/pro-escuro.jpg) | ![Pro claro](docs/img/pro-claro.jpg) |
 
-- **Pro** — console de operações: menu lateral agrupado, superfícies planas em ardósia, um único azul de destaque e cores só para estado. Números tabulares, IPs em monoespaçada.
-- **Lagoa** — estilo painel de casa inteligente: fundo azul-petróleo, cards claros foscos, ícones verde-limão e barra em pílula.
-- **Glass** — vidro fosco, cards com imagem e dock flutuante. Feito para tablet na parede.
-- **NOC Terminal** — monoespaçado, fósforo verde/âmbar/ciano, destinos em tabela, navegação pelas teclas 1–0.
-- **Grafana / Zabbix** — painéis planos e densos com menu lateral fixo. Mais informação por tela no PC.
-- **Material You** — paleta inteira gerada a partir da sua cor de destaque.
-
-Ícones do conjunto [Lucide](https://lucide.dev) em todos os temas.
-
-![Configurações → Aparência](docs/img/temas.jpg)
+Em **Configurações → Aparência**: modo **escuro, claro ou automático** (escuro das 18h às 7h, troca sozinho), tamanho da interface e o padrão do servidor. Cada aparelho pode ter o seu.
 
 ---
 
@@ -129,18 +117,24 @@ O mesmo bot que manda os alertas também responde. Configure em **Configuraçõe
 | `/diario` | resumo das últimas 24 h com a causa de cada queda |
 | `/banda` | quem está usando a internet agora (por aparelho) |
 | `/aparelhos` · `/bloqueados` | aparelhos conectados, novos da semana e bloqueados |
+| `/cameras [nome ou número]` | fotos das câmeras agora (todas viram um álbum) |
+| `/portas` | portas do MikroTik com comentário, link e qual é a internet |
+| `/desligar <porta ou pppoe> [min]` · `/religar <porta>` | desliga/liga uma porta (pelo nome ou comentário, ex.: "roteador") — pede confirmação; religa sozinha no tempo configurado |
+| `/reiniciar mikrotik \| dvr \| servidor \| netnoc \| tudo` | reinicia, na ordem segura, e avisa quando voltar — pede confirmação |
 | `/pppoe` | reinicia a conexão PPPoE — pede confirmação |
 | `/acordar <PC>` | liga o computador pela rede (Wake-on-LAN) — pede confirmação |
 | `/bloquear` · `/desbloquear <aparelho>` | corta ou libera o acesso do aparelho — pede confirmação |
 
-**Ações** (reiniciar, acordar, bloquear) vêm desligadas: ative em Configurações → Alertas → Bot → "Permitir ações no roteador". Cada uma chega com os botões **Sim / Cancelar** e só acontece no "Sim". O usuário do MikroTik precisa de permissão de escrita; o bloqueio usa a lista `netnoc-bloqueados` e cria uma regra "NetNOC" no topo do firewall (apague-a para desfazer tudo).
+**Ações** vêm desligadas: ative em Configurações → Alertas → Bot → "Permitir ações no roteador" e, para portas e reinícios, as chaves próprias logo abaixo (com o tempo da volta automática e o que entra no "reinicia tudo").
 
-**Com IA** (opcional), dá para perguntar em português: *"a internet caiu essa noite?"*, *"por que o Quad9 está lento?"*, *"faz um traceroute pro 1.1.1.1"*. A IA escolhe as consultas, o NetNOC executa e ela escreve a resposta. Duas opções com cota grátis:
+Proteções das portas: a internet (PPPoE/WAN) nunca fica desligada sem volta automática, que é agendada **no próprio MikroTik** (funciona mesmo sem internet e sem o Telegram); a porta em que o servidor do NetNOC está ligado e a bridge nunca são desligadas. Para o bot reiniciar o servidor e o NetNOC, rode uma vez no Pi `./install.sh --permitir-reinicio` (libera só `systemctl reboot` e `systemctl restart netnoc`; desfaça com `--remover-reinicio`). Reiniciar o DVR precisa de um usuário administrador no DVR. Cada uma chega com os botões **Sim / Cancelar** e só acontece no "Sim". O usuário do MikroTik precisa de permissão de escrita; o bloqueio usa a lista `netnoc-bloqueados` e cria uma regra "NetNOC" no topo do firewall (apague-a para desfazer tudo).
+
+**Com IA** (opcional), dá para pedir em português: *"a internet caiu essa noite?"*, *"me manda a foto do portão"*, *"desabilita a porta do roteador por 10 min"*, *"desliga o PPPoE"*, *"reinicia tudo"*. A IA escolhe as consultas, o NetNOC executa e ela escreve a resposta. Duas opções com cota grátis:
 
 - **Google Gemini** — chave em [aistudio.google.com/apikey](https://aistudio.google.com/apikey)
 - **Groq** — chave em [console.groq.com/keys](https://console.groq.com/keys)
 
-A IA só tem acesso a ferramentas de leitura: não altera configuração, não reinicia nada e não roda comandos livres.
+A IA não executa nada sozinha: as consultas são só leitura e as ações viram um pedido com os botões **Sim / Cancelar**, validado pelo servidor. Ela não altera configuração nem roda comandos livres.
 
 ## 📺 Modo TV
 
@@ -199,7 +193,7 @@ O go2rtc escuta apenas em `127.0.0.1`. O navegador nunca fala com o DVR diretame
 
 - Python 3.9 ou superior
 - Linux (testado em Raspberry Pi OS e DietPi, inclusive no Raspberry Pi 3)
-- Acesso à internet no aparelho (ping, DNS, IP público e speedtest)
+- Acesso à internet no aparelho (ping, DNS e IP público)
 
 ---
 
@@ -215,7 +209,7 @@ chmod +x install.sh
 ```
 
 O `install.sh`:
-1. instala `gcc`/`python3-dev` se faltar (para compilar o `psutil`), além de `snmp`, `traceroute` e `ping`;
+1. instala `gcc`/`python3-dev` se faltar (para compilar o `psutil`), além de `traceroute` e `ping`;
 2. baixa o **go2rtc** para a sua arquitetura (câmeras ao vivo);
 3. cria o ambiente virtual (`venv`) e instala as dependências.
 
@@ -235,6 +229,8 @@ Na primeira execução, a senha do usuário **admin** aparece no log. Também d�
 ```bash
 venv/bin/python manage.py set-password admin
 ```
+
+Outros comandos do `manage.py`: `secrets` (senhas e tokens salvos e se estão cifrados), `protect` (cifra o que estiver em texto puro), `rotate-key --yes` (chave nova, com o NetNOC e o coletor parados) e `audit 50` (últimas linhas da auditoria).
 
 ### Iniciando no boot (systemd)
 
@@ -269,12 +265,12 @@ journalctl -u netnoc -f        # logs
 
 Tudo pela aba **Configurações**:
 
+- **Geral** — intervalos de coleta, dados (histórico), **backup/restauração** (as senhas não saem no arquivo), nome do painel e página de status pública
+- **Aparência** — modo (escuro, claro, automático), tamanho da interface e padrão do servidor
 - **Destinos** — hosts a monitorar, com dependência (pai) e grupo para o mapa
-- **Geral** — intervalos de coleta, speedtest automático e nome do painel
-- **Alertas** — limites de latência, jitter, perda e DNS, e Telegram (bot + chat_id, com botão de teste)
-- **Integrações** — MikroTik, AdGuard Home e DVR (com **Salvar e testar**, que mostra o que o equipamento respondeu)
-- **Aparência** — tema, modo, cor, tamanho da interface e padrão do servidor
-- **Backup/restauração** da configuração (as senhas não saem no arquivo)
+- **Alertas** — Telegram, bot e IA, manutenção e **outros canais** (Discord, webhook assinado, e-mail)
+- **Integrações** — MikroTik (com a **porta da internet** para o pico da WAN), AdGuard Home e DVR
+- **Segurança** — senhas e tokens salvos, **usuários**, token do Prometheus e **auditoria** com filtros
 
 O `config.json` só é usado na primeira execução para popular o banco; depois tudo fica no SQLite.
 
@@ -289,12 +285,10 @@ O `config.json` só é usado na primeira execução para popular o banco; depois
 
 | URL | O que faz |
 |---|---|
-| `/?skin=pro&modo=light` | Tema Pro claro nesta tela |
-| `/?skin=terminal&modo=verde#tv` | Modo TV no tema NOC Terminal |
-| `/?skin=grafana&modo=dark` | Força o tema Grafana nesta tela |
-| `/?skin=material&cor=%230b57d0` | Material You com outra cor |
+| `/?modo=light` · `/?modo=dark` · `/?modo=auto` | Fixa o modo nesta tela |
 | `/?densidade=minima` | Interface menor nesta tela |
-| `/classic` | Interface antiga (v2) |
+| `/#tv` · `/#tv?cenas=1,2,6&tempo=20` | Modo TV (todas ou algumas cenas) |
+| `/status` | Página de status pública (se ativada) |
 
 ### Variáveis de ambiente
 
@@ -315,19 +309,13 @@ O `config.json` só é usado na primeira execução para popular o banco; depois
 | Arquivo | O que guarda | Pode apagar? |
 |---|---|---|
 | `netnoc.db` | destinos, grupos, integrações, usuários, aparelhos do DHCP | **Não** — é a sua configuração (alguns KB) |
-| `netnoc-historico.db` | pings, médias, DNS, speedtests, incidentes, eventos, logs | **Sim**, quando quiser |
+| `netnoc-historico.db` | pings, médias, DNS, tráfego do MikroTik, incidentes, eventos, logs | **Sim**, quando quiser |
 
 Para zerar o histórico: **Configurações → Geral → Dados → Apagar histórico**, ou com o serviço parado `rm netnoc-historico.db*` (ele é recriado vazio na próxima subida).
 
-### Agente para sites remotos
-
-1. Gere o token em **Configurações → Segurança**.
-2. Em cada alvo, informe o site (ex.: `filial-a`).
-3. No site remoto (copie `agente/agent.py`): `python3 agent.py --url https://noc.exemplo:8000 --site filial-a --token TOKEN`
-
 ### Prometheus
 
-`GET /metrics` com Basic ou `Authorization: Bearer <token>` (o token é gerado na interface).
+`GET /metrics` com Basic ou `Authorization: Bearer <token>` (gere o token em **Configurações → Segurança**).
 
 ---
 
@@ -342,6 +330,8 @@ sudo systemctl restart netnoc
 
 O banco migra sozinho na primeira subida (faça backup antes). No navegador, `Ctrl+F5` uma vez.
 
+**Da v3 para a v4.0**: a migração apaga do banco o que saiu (SNMP, Zabbix, multi-site e speedtest) e tira da lista os destinos do tipo agente; o resto da configuração fica. Temas antigos viram o Pro (mantendo claro/escuro).
+
 Para uma instalação limpa sem perder nada: `./reinstalar.sh` faz backup da configuração, chave e histórico, remove, instala a versão atual e restaura os dados (detalhes no [INSTALL.md](INSTALL.md#13-reinstalar-ou-desinstalar-com-backup-automático)).
 
 ---
@@ -355,16 +345,15 @@ netlab/
 ├── main.py                 # ponto de entrada (o serviço continua com: uvicorn main:app)
 ├── netnoc/
 │   ├── nucleo/             # banco (SQLite), segurança e senhas cifradas, estatísticas, backup
-│   ├── coleta/             # ping/TCP/HTTP, incidentes, DNS, sistema, MikroTik, AdGuard, SNMP, agentes
+│   ├── coleta/             # ping/TCP/HTTP, incidentes, DNS, sistema, MikroTik (pico da WAN), AdGuard
 │   ├── analise/            # diagnóstico da causa, a rede contada + diário, máquina do tempo, SLA
 │   ├── alertas/            # Telegram, Discord, webhook, e-mail, manutenção
 │   ├── bot/                # bot do Telegram, IA (Gemini/Groq), ações com confirmação
-│   ├── integracoes/        # DVR/câmeras (go2rtc), Zabbix
+│   ├── integracoes/        # DVR/câmeras (go2rtc)
 │   └── web/                # API FastAPI e páginas
-├── static/                 # interface (app.html + glass/: temas, Modo TV, mapa, mostradores)
+├── static/                 # interface (app.html + glass/: tema Pro, Modo TV, mapa, mostradores)
 ├── collector/              # netnoc-collector em Rust (opcional): ping, MikroTik, AdGuard
-├── agente/                 # agente para sites remotos (script independente)
-├── manage.py               # utilitário: reset-admin, set-password
+├── manage.py               # utilitário: reset-admin, set-password, secrets, protect, rotate-key, audit
 ├── install.sh · reinstalar.sh · config.json · requirements.txt
 ├── docs/ · INSTALL.md · CHANGELOG.md
 └── LICENSE · THIRD-PARTY-NOTICES.txt
@@ -377,15 +366,14 @@ netlab/
 | [`netnoc/analise`](netnoc/analise/README.md) | por que caiu, o que aconteceu, como estava |
 | [`netnoc/alertas`](netnoc/alertas/README.md) | para onde vão os avisos |
 | [`netnoc/bot`](netnoc/bot/README.md) | conversa e age pelo Telegram |
-| [`netnoc/integracoes`](netnoc/integracoes/README.md) | câmeras e Zabbix |
+| [`netnoc/integracoes`](netnoc/integracoes/README.md) | câmeras do DVR |
 | [`netnoc/web`](netnoc/web/README.md) | a API e as páginas |
 | [`static`](static/README.md) | a interface |
 | [`collector`](collector/README.md) | coletor em Rust |
-| [`agente`](agente/README.md) | sites remotos |
 
 ## 🛠️ Notas técnicas
 
-- Coletores supervisionados: uma exceção não derruba a thread, e a saúde de cada um aparece em Configurações (`/api/health/workers`)
+- Coletores supervisionados: uma exceção não derruba a thread, e a saúde de cada um aparece em Configurações (os que não têm nada configurado nem aparecem)
 - Janela de avaliação por tempo (`window_seconds`, padrão 300 s) e DNS lento só depois de 3 medições seguidas
 - Histórico bruto de 7 dias, agregados de 5 min/1 h por mais tempo (`history_retention_days`)
 - Chart.js, ícones e fontes ficam no próprio projeto: funciona sem internet e sem CDN

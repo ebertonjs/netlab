@@ -1,15 +1,5 @@
 (function () {
   const $ = id => document.getElementById(id);
-  const root = document.documentElement;
-  // tema escolhido no painel (inclusive o personalizado)
-  try {
-    const t = localStorage.getItem('netnoc_theme') || 'dark-blue';
-    root.setAttribute('data-theme', t);
-    if (t === 'custom') {
-      const c = JSON.parse(localStorage.getItem('netnoc_custom_theme') || 'null');
-      if (c) Object.keys(c).forEach(k => root.style.setProperty('--' + k, c[k]));
-    }
-  } catch (e) { /* ok */ }
   function setName(n) { if (!n) return; $('appName').textContent = n; document.title = 'Entrar — ' + n; }
   try { setName(localStorage.getItem('netnoc_app_name')); } catch (e) { /* ok */ }
   fetch('/api/loginfo').then(r => r.json()).then(d => {

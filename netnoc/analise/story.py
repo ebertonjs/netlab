@@ -14,7 +14,7 @@ from netnoc.coleta import monitor
 from netnoc.nucleo import stats
 
 BAD_TYPES = ("offline", "local")
-WARN_TYPES = ("loss", "latency", "jitter", "dns", "cert", "agent", "snmp", "snmpval", "camera", "dvr_hd", "cpu", "temp")
+WARN_TYPES = ("loss", "latency", "jitter", "dns", "cert", "camera", "dvr_hd", "cpu", "temp")
 dur, _n = diagnose.dur, diagnose._n
 
 
@@ -86,7 +86,7 @@ def _title(incs):
 
 def _uptime_avg(secs):
     up = stats.uptime_pct(secs) or {}
-    names = {t["name"] for t in monitor.get_targets() if t.get("type") != "agent"}
+    names = {t["name"] for t in monitor.get_targets()}
     vals = [v for k, v in up.items() if k in names and v is not None]
     return (sum(vals) / len(vals) if vals else None), {k: v for k, v in up.items() if k in names}
 
@@ -106,7 +106,31 @@ def _cause_totals(eps):
     return sorted(tot.items(), key=lambda x: -x[1])
 
 
+def _signature():
+    """Muda sempre que um incidente abre/fecha ou sai um diagnóstico (consultas por índice, < 1 ms)."""
+    try:
+        a = db.query("SELECT MAX(id) m FROM incidents")[0]["m"]
+        b = db.query("SELECT MAX(resolved_ts) m FROM incidents INDEXED BY idx_inc_open")[0]["m"]
+        c = db.query("SELECT MAX(id) m FROM diagnoses")[0]["m"]
+        d = db.query("SELECT MAX(end_ts) m FROM diagnoses")[0]["m"]
+        return (a, b, c, d)
+    except Exception:
+        return time.time()
+
+
 def story(hours=48):
+    """Cache curto: a página inicial e a TV pedem a cada 30 s. A chave inclui a assinatura dos
+    incidentes/diagnósticos, então qualquer queda ou volta aparece na hora; sem mudança, o texto
+    é refeito no máximo a cada 15 s (os "há X min")."""
+    return _story_cached(int(hours), int(time.time() // 15), _signature())
+
+
+@stats.ttl_cache(20)
+def _story_cached(hours, _janela, _assinatura):
+    return _story(hours)
+
+
+def _story(hours=48):
     now = time.time()
     eps = episodes(hours)
     open_bad = [e for e in eps if e["open"] and e["level"] == "bad"]
@@ -200,9 +224,13 @@ def diary(hours=24):
             L += ["", f"Pior latência: {pk[1]} com {_n(pk[0])} ms às {_hm(pk[2])}"]
     except Exception:
         pass
-    sp = db.query("SELECT ts, download, upload FROM speedtests WHERE ts >= ? ORDER BY ts DESC LIMIT 1", (now - hours * 3600,))
-    if sp and sp[0]["download"] is not None:
-        L.append(f"Speedtest ({_hm(sp[0]['ts'])}): ↓ {_n(sp[0]['download'], 0)} ↑ {_n(sp[0]['upload'] or 0, 0)} Mbps")
+    try:
+        pk = monitor.wan_peak(hours * 3600)
+        if pk:
+            L.append(f"Pico na WAN: ↓ {_n(pk['rx_bps'] / 1e6, 0)} Mbps às {_hm(pk['rx_ts'])}"
+                     + (f" · ↑ {_n(pk['tx_bps'] / 1e6, 0)} Mbps às {_hm(pk['tx_ts'])}" if pk.get("tx_bps") else ""))
+    except Exception:
+        pass
     try:
         pats = monitor.detect_patterns(30)[:2]
         if pats:

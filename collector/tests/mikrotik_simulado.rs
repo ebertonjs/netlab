@@ -67,6 +67,17 @@ async fn bps_calculado_entre_duas_coletas() {
 }
 
 #[tokio::test]
+async fn porta_parada_so_entra_quando_muda() {
+    let m = mock(roteador("1000000")).await;
+    let mut mt = Mt::new(Duration::from_secs(3));
+    let conta = |recs: &[Rec], n: &str| recs.iter().filter(|r| matches!(r, Rec::MtIface { name, .. } if name == n)).count();
+    let (r1, _) = mt.poll(&integ(m.port, "u")).await;
+    assert_eq!((conta(&r1, "ether1"), conta(&r1, "ether2")), (1, 1), "primeira coleta grava todas");
+    let (r2, _) = mt.poll(&integ(m.port, "u")).await;
+    assert_eq!((conta(&r2, "ether1"), conta(&r2, "ether2")), (1, 0), "porta desativada sem mudança não repete");
+}
+
+#[tokio::test]
 async fn erros_viram_mensagens_curtas() {
     type Handler = Box<dyn Fn(&str) -> Resp + Send + Sync>;
     let casos: Vec<(Handler, &str)> = vec![

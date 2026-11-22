@@ -9,7 +9,7 @@ Binário separado que faz a coleta pesada do NetNOC e grava no **mesmo SQLite** 
 | `agh` | AdGuard Home `/control/stats` | `agh_stats` |
 | — | estado de cada módulo e heartbeat | `meta.collector:*`, `events` (falhas de coleta) |
 
-O resto continua no Python, com a mesma lógica de antes: API, painel, incidentes (offline, perda, latência, jitter, queda local), rollups, limpeza, DHCP, DNS, IP público, sistema, SNMP, certificados e speedtest.
+O resto continua no Python, com a mesma lógica de antes: API, painel, incidentes (offline, perda, latência, jitter, queda local), rollups, limpeza, DHCP, DNS, IP público, sistema e certificados.
 
 Como os dois lados se conversam:
 
@@ -93,7 +93,7 @@ cargo test -- --ignored         # + ICMP de verdade em 127.0.0.1 (precisa de CAP
 | `tests/adguard_simulado.rs` | AdGuard falso: estatísticas, autenticação só com usuário, falhas |
 | `tests/ping_agendador.rs` | agendador de ping com sonda simulada gravando num SQLite real: intervalos, latência, falha, jitter, destino fora sem backoff, tipo `agent` ignorado, destino removido sai da agenda |
 
-O coletor não faz SNMP (isso continua no Python, pelo net-snmp).
+Desde a 4.0, porta do MikroTik parada ou desativada só é gravada quando muda de estado ou a cada 10 min (`IDLE_STORE_SECS`); portas em uso, a cada coleta.
 
 ## 3. Deploy no Pi
 
@@ -136,6 +136,8 @@ Para assumir só uma parte, use `NETNOC_COLLECTOR_MODULES=ping ./instalar-coleto
 | `NETNOC_COLLECTOR_MODULES` | `ping,mikrotik,agh` (nome desconhecido = erro) |
 
 Destinos, intervalos, MikroTik e AdGuard continuam sendo configurados **na interface**. O coletor relê o banco a cada 5 s.
+
+**HTTPS do MikroTik com certificado fixado (4.1.0):** quando a interface salva a impressão digital SHA-256 do certificado do RouterOS, o coletor só aceita aquele certificado (a cadeia e o nome não importam; a assinatura do handshake é conferida). Certificado diferente = a coleta para com o erro "certificado mudou". Coletores 4.0 ignoram o campo e seguem pelo `verify_ssl`.
 
 **Validação rigorosa:** campo com nome errado no `.toml`, valor fora da faixa (ex.: `tick_ms = 10`) ou módulo desconhecido em `NETNOC_COLLECTOR_MODULES` impedem a partida, com todos os problemas listados e a linha do arquivo. Confira antes de reiniciar o serviço:
 

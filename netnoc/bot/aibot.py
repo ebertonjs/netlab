@@ -6,18 +6,18 @@ escreve o relatório. Sem IA configurada, os comandos /status, /ping, /trace, /a
 
 Segurança:
 - Só responde ao chat_id configurado em Telegram (os outros são ignorados).
-- As ferramentas são só de leitura: nada é alterado, nenhum comando livre é executado.
+- As ferramentas de consulta são só de leitura. Ações (PPPoE, portas, reinícios, bloquear) só são PROPOSTAS: o
+  servidor valida e manda botões Sim/Cancelar; nada acontece sem o "Sim". Nenhum comando livre é executado.
 - Ping/traceroute com host validado, limite de quantidade e de uso por minuto.
 - Chaves das IAs cifradas no banco (mesmo esquema das outras senhas); erros nunca expõem chave/token.
 """
-import json, re, secrets, subprocess, threading, time
+import json, re, threading, time
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 import requests
 
-from netnoc.nucleo import db
 from netnoc.coleta import monitor
 from netnoc.nucleo import security
 
@@ -33,11 +33,14 @@ DEFAULTS = {
     "diary_time": "07:00",
     "actions": False,               # ações no roteador (PPPoE, bloquear, acordar) — sempre com confirmação
     "new_devices": True,            # avisa quando um aparelho novo aparece no DHCP
+    "actions_ports": False,         # v4.1: desligar/ligar portas e o PPPoE (sempre com volta automática na internet)
+    "actions_reboot": False,        # v4.1: reiniciar MikroTik, DVR, servidor e o NetNOC
+    "revert_min": 5,                # minutos até a porta/PPPoE religar sozinho (0 = só religa quando pedir)
+    "restart_all": ["mikrotik", "dvr"],   # o que "reinicia tudo" inclui (mikrotik, dvr, netnoc, servidor)
 }
+RESTART_ITEMS = {"dvr": "DVR", "netnoc": "serviço do NetNOC", "mikrotik": "MikroTik", "servidor": "servidor (Raspberry Pi)"}
 PROVIDERS = ("none", "gemini", "groq")
 MAX_ROUNDS = 6                      # chamadas de ferramenta por pergunta
-PING_MAX = 10                       # pings por chamada
-TOOL_RATE = 20                      # pings/traceroutes por minuto (somados)
 HIST_TTL = 15 * 60                  # memória curta da conversa
 HIST_LEN = 8                        # mensagens guardadas (usuário + bot)
 
@@ -49,8 +52,6 @@ _lock = threading.Lock()
 _pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="aibot")
 _ctx = threading.local()            # chat da conversa em andamento (para as ferramentas que pedem confirmação)
 _pending = {}                       # token -> ação esperando o "Sim"
-ACTION_TTL = 180                    # s para confirmar uma ação pedida
-NEWDEV_TTL = 3600                   # s para o botão "Bloquear" do aviso de aparelho novo
 
 
 def get_cfg():
@@ -70,8 +71,16 @@ def set_cfg(cfg):
         if not valid_model(m):
             raise ValueError("Nome de modelo inválido")
         out[k] = m
-    for k in ("enabled", "any_host", "diary", "actions", "new_devices"):
+    for k in ("enabled", "any_host", "diary", "actions", "new_devices", "actions_ports", "actions_reboot"):
         out[k] = bool(out[k])
+    try:
+        out["revert_min"] = int(out["revert_min"])
+    except (TypeError, ValueError):
+        raise ValueError("Volta automática inválida")
+    if not 0 <= out["revert_min"] <= 1440:
+        raise ValueError("Volta automática deve ficar entre 0 (não religar) e 1440 min")
+    ra = out["restart_all"] if isinstance(out["restart_all"], list) else []
+    out["restart_all"] = [k for k in RESTART_ITEMS if k in ra]
     if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", str(out["diary_time"] or "")):
         raise ValueError("Horário do diário inválido (use HH:MM)")
     security.save_secret_cfg("ai_bot", out, SECRET)
@@ -126,614 +135,6 @@ def _bps(v):
     return f"{int(v)} bps"
 
 
-# ------------------------------------------------------------------ ferramentas (só leitura)
-def _rate_ok():
-    now = time.time()
-    with _lock:
-        while _tool_ts and now - _tool_ts[0] > 60:
-            _tool_ts.popleft()
-        if len(_tool_ts) >= TOOL_RATE:
-            return False
-        _tool_ts.append(now)
-        return True
-
-
-def _find_target(q):
-    """Nome do destino (sem diferenciar maiúsculas/acentos) ou host exato."""
-    import unicodedata
-    norm = lambda s: unicodedata.normalize("NFD", str(s or "")).encode("ascii", "ignore").decode().lower().strip()
-    q0 = norm(q)
-    ts = monitor.get_targets()
-    for t in ts:
-        if norm(t["name"]) == q0 or norm(t["host"]) == q0:
-            return t
-    part = [t for t in ts if q0 and q0 in norm(t["name"])]
-    return part[0] if len(part) == 1 else None
-
-
-def _resolve(dest):
-    """(destino cadastrado ou None, host, tipo). Levanta ValueError se não puder."""
-    dest = str(dest or "").strip()
-    if not dest:
-        raise ValueError("Informe um destino (nome cadastrado, IP ou domínio).")
-    t = _find_target(dest)
-    if t:
-        return t, t["host"], t.get("type", "icmp")
-    host = re.sub(r"^https?://", "", dest).split("/")[0]
-    if not security.valid_host(host):
-        raise ValueError(f"'{dest}' não é um destino cadastrado nem um IP/domínio válido.")
-    if not get_cfg()["any_host"]:
-        raise ValueError(f"'{dest}' não está entre os destinos cadastrados (ping livre desativado nas configurações).")
-    return None, host, "icmp"
-
-
-def _icmp(host, n):
-    """Pings ICMP pelo `ping` do sistema: lista de ms (None = perdido)."""
-    from netnoc.coleta import checks
-    return checks.ping_many(host, n)
-
-
-def _history_24h(name):
-    rows = (_api["series"](86400, [name]) or {}).get(name, [])
-    lats = [r["latency"] for r in rows if r.get("latency") is not None]
-    loss = [r["loss_pct"] for r in rows if r.get("loss_pct") is not None]
-    up = (_api["uptime"](86400, [name]) or {}).get(name)
-    return {"latencia_media_ms": _r(sum(lats) / len(lats)) if lats else None,
-            "latencia_min_ms": _r(min(lats)) if lats else None, "latencia_max_ms": _r(max(lats)) if lats else None,
-            "perda_media_pct": _r(sum(loss) / len(loss), 2) if loss else None, "disponibilidade_pct": _r(up, 2)}
-
-
-def tool_ping(destino, quantidade=5):
-    t, host, kind = _resolve(destino)
-    n = max(1, min(int(quantidade or 5), PING_MAX))
-    if not _rate_ok():
-        raise RuntimeError("limite de testes por minuto atingido, tente de novo em instantes")
-    if kind == "icmp":
-        samples = _icmp(host, n)
-    else:
-        from netnoc.coleta import checks
-        samples = []
-        for _ in range(n):
-            samples.append(checks.probe(t))
-            time.sleep(0.2)
-    ok = [s for s in samples if s is not None]
-    jit = [abs(ok[i] - ok[i - 1]) for i in range(1, len(ok))]
-    out = {"destino": t["name"] if t else host, "host": host, "tipo": kind, "enviados": n, "recebidos": len(ok),
-           "perda_pct": round(100 * (n - len(ok)) / n, 1),
-           "min_ms": _r(min(ok)) if ok else None, "media_ms": _r(sum(ok) / len(ok)) if ok else None,
-           "max_ms": _r(max(ok)) if ok else None, "jitter_ms": _r(sum(jit) / len(jit)) if jit else None,
-           "amostras_ms": [_r(s) for s in samples]}
-    if t:
-        out["historico_24h"] = _history_24h(t["name"])
-        snap = (_api["overview"]().get("targets") or {}).get(t["name"]) or {}
-        out["janela_atual"] = {"online": snap.get("online"), "latencia_media_ms": _r(snap.get("avg_latency")),
-                               "perda_pct": _r(snap.get("loss_pct"))}
-    return out
-
-
-def tool_traceroute(destino):
-    _, host, _ = _resolve(destino)
-    if not _rate_ok():
-        raise RuntimeError("limite de testes por minuto atingido")
-    from netnoc.coleta import checks
-    hops = checks.traceroute(host, 20)
-    return {"host": host, "saltos": [{"n": h["hop"], "ip": h["ip"] or "*", "ms": _r(h["ms"])} for h in hops]}
-
-
-def tool_status():
-    o = _api["overview"]()
-    tg = _api["targets"]()
-    inc = _api["incidents"](active_only=True)
-    return {
-        "agora": _hm(time.time()), "internet_online": o.get("internet_online"), "ip_publico": o.get("public_ip"),
-        "latencia_media_ms": o.get("avg_latency"), "jitter_medio_ms": o.get("avg_jitter"), "perda_media_pct": o.get("avg_loss_pct"),
-        "destinos": [{"nome": t["name"], "host": t["host"], "tipo": t.get("type"), "online": t.get("online"),
-                      "latencia_ms": _r(t.get("latency")), "jitter_ms": _r(t.get("jitter")), "perda_pct": _r(t.get("loss_pct")),
-                      "disponibilidade_24h_pct": _r(t.get("uptime_24h"), 2)} for t in tg],
-        "incidentes_abertos": [{"destino": i["target"], "tipo": i["type"], "severidade": i["severity"], "mensagem": i["message"],
-                                "desde": _hm(i["started_ts"]), "duracao": _dur(time.time() - i["started_ts"])} for i in inc],
-    }
-
-
-def tool_historico(destino, horas=24):
-    t, _, _ = _resolve(destino)
-    if not t:
-        raise ValueError("histórico só existe para destinos cadastrados")
-    horas = max(1, min(int(horas or 24), 24 * 30))
-    secs = horas * 3600
-    rows = (_api["series"](secs, [t["name"]]) or {}).get(t["name"], [])
-    lats = [r["latency"] for r in rows if r.get("latency") is not None]
-    loss = [r["loss_pct"] for r in rows if r.get("loss_pct") is not None]
-    worst = sorted([r for r in rows if r.get("latency") is not None], key=lambda r: -r["latency"])[:3]
-    since = time.time() - secs
-    incs = [i for i in _api["incidents"](days=horas / 24) if i["target"] == t["name"]]
-    return {"destino": t["name"], "periodo_horas": horas, "amostras": len(rows),
-            "latencia_media_ms": _r(sum(lats) / len(lats)) if lats else None,
-            "latencia_min_ms": _r(min(lats)) if lats else None, "latencia_max_ms": _r(max(lats)) if lats else None,
-            "perda_media_pct": _r(sum(loss) / len(loss), 2) if loss else None,
-            "disponibilidade_pct": _r((_api["uptime"](secs, [t["name"]]) or {}).get(t["name"]), 2),
-            "piores_momentos": [{"quando": _hm(r["ts"]), "latencia_ms": _r(r["latency"])} for r in worst],
-            "incidentes": [{"tipo": i["type"], "severidade": i["severity"], "mensagem": i["message"],
-                            "inicio": _hm(i["started_ts"]), "fim": _hm(i["resolved_ts"]),
-                            "duracao": _dur((i["resolved_ts"] or time.time()) - i["started_ts"])}
-                           for i in incs if (i["resolved_ts"] or time.time()) >= since][:20]}
-
-
-def tool_incidentes(horas=24, apenas_abertos=False):
-    horas = max(1, min(int(horas or 24), 24 * 30))
-    rows = _api["incidents"](active_only=True) if apenas_abertos else _api["incidents"](days=horas / 24)
-    return {"periodo_horas": None if apenas_abertos else horas, "total": len(rows),
-            "incidentes": [{"destino": i["target"], "tipo": i["type"], "severidade": i["severity"], "mensagem": i["message"],
-                            "inicio": _hm(i["started_ts"]), "fim": _hm(i["resolved_ts"]) or "em aberto",
-                            "duracao": _dur((i["resolved_ts"] or time.time()) - i["started_ts"])} for i in rows[:30]]}
-
-
-def tool_mikrotik():
-    st = _api["mikrotik_status"]()
-    if not st.get("enabled"):
-        return {"ativo": False, "obs": "integração MikroTik desativada"}
-    ifs = [i for i in _api["mikrotik_ifaces"]() if not i.get("disabled")]
-    ifs.sort(key=lambda i: -((i.get("rx_bps") or 0) + (i.get("tx_bps") or 0)))
-    return {"ativo": True, "modelo": st.get("board_name"), "routeros": st.get("version"), "dados_atrasados": st.get("stale"),
-            "cpu_pct": st.get("cpu_load"), "ram_pct": st.get("mem_pct"), "temperatura_c": st.get("temperature"),
-            "ligado_ha": _dur(st.get("uptime_s")) if st.get("uptime_s") else None,
-            "interfaces": [{"nome": i["name"], "link": bool(i.get("running")), "download": _bps(i.get("rx_bps")),
-                            "upload": _bps(i.get("tx_bps"))} for i in ifs[:12]]}
-
-
-def tool_dns():
-    return {"servidores": [{"nome": d["name"], "ip": d["ip"], "ok": d["success"], "latencia_ms": _r(d["latency"])}
-                           for d in _api["dns"]()]}
-
-
-def tool_speedtest():
-    rows = _api["speedtests"](limit=6)
-    return {"testes": [{"quando": _hm(r["ts"]), "download_mbps": _r(r.get("download")), "upload_mbps": _r(r.get("upload")),
-                        "latencia_ms": _r(r.get("latency"))} for r in rows]}
-
-
-def tool_servidor():
-    s = _api["system"]()
-    return {"host": s.get("host_label"), "versao_netnoc": s.get("version"), "cpu_pct": s.get("cpu_pct"),
-            "ram_pct": s.get("mem_pct"), "temperatura_c": s.get("temp_c"), "disco_pct": s.get("disk_pct"),
-            "ligado_ha": _dur(s.get("host_uptime_s")) if s.get("host_uptime_s") else None,
-            "netnoc_rodando_ha": _dur(s.get("app_uptime_s")), "coletores_com_problema": s.get("workers_bad")}
-
-
-def tool_diagnosticar(destino=None):
-    from netnoc.analise import diagnose
-    if destino:
-        t, host, _ = _resolve(destino)
-        if not t:
-            raise ValueError("o diagnóstico completo é para destinos cadastrados; para outros endereços use ping ou traceroute")
-        names = [t["name"]]
-    else:
-        names = []
-    if not _rate_ok():
-        raise RuntimeError("limite de testes por minuto atingido")
-    with diagnose._lock:
-        d = diagnose.investigate("check", names)
-    return {"causa": d["title"], "confianca": d["confidence"], "explicacao": d["text"], "o_que_fazer": d["tips"],
-            "evidencias": [("ok: " if e["ok"] else "falha: " if e["ok"] is False else "") + e["txt"] for e in d["evidence"]]}
-
-
-def tool_diagnosticos(horas=48):
-    from netnoc.analise import story
-    eps = story.episodes(max(1, min(int(horas or 48), 24 * 30)))
-    return {"episodios": [{"inicio": _hm(e["start"]), "fim": _hm(e["end"]) if e["end"] else "em aberto", "duracao": _dur(e["duration_s"]),
-                           "o_que": e["title"], "causa_provavel": e["cause"], "explicacao": e["text"]} for e in eps[:25]]}
-
-
-def tool_banda():
-    from netnoc.bot import actions
-    r = actions.bandwidth_top(3)
-    return {"medido_por": r["method"], "total_download": _bps(r["total_down_bps"]), "total_upload": _bps(r["total_up_bps"]),
-            "aparelhos": [{"nome": d["name"], "ip": d["ip"], "download": _bps(d["down_bps"]), "upload": _bps(d["up_bps"])} for d in r["devices"]]}
-
-
-def tool_aparelhos(dias=7):
-    from netnoc.bot import actions
-    lim = time.time() - max(1, min(int(dias or 7), 90)) * 86400
-    devs = actions.devices()
-    return {"total": len(devs), "conectados_agora": sum(1 for d in devs if d["active"]),
-            "novos_no_periodo": [{"nome": d["hostname"] or "sem nome", "ip": d["ip"], "mac": d["mac"], "primeira_vez": _hm(d["first_seen"])}
-                                 for d in devs if (d["first_seen"] or 0) >= lim][:20]}
-
-
-def tool_acao(acao, aparelho=None):
-    chat = getattr(_ctx, "chat", None)
-    if not chat or chat == "painel":
-        return {"erro": "ações só podem ser confirmadas pelo Telegram"}
-    kind = {"reiniciar_pppoe": "pppoe", "acordar": "wake", "bloquear": "block", "desbloquear": "unblock"}.get(acao)
-    if not kind:
-        return {"erro": "ação desconhecida"}
-    text, kb = propose(chat, kind, aparelho)
-    if not kb:
-        return {"erro": text}
-    tg = monitor.get_telegram()
-    _send(tg["bot_token"], chat, text, kb)
-    return {"status": "pedido de confirmação enviado com os botões Sim/Cancelar; a ação só acontece se o usuário tocar em Sim"}
-
-
-S_DEST = {"type": "string", "description": "Nome de um destino cadastrado (ex.: Google DNS) ou IP/domínio"}
-TOOLS = [
-    ("status_rede", tool_status, "Situação atual: internet, todos os destinos (latência, jitter, perda, disponibilidade 24h) e incidentes abertos.", {}, []),
-    ("ping", tool_ping, "Faz pings AGORA para um destino e compara com as últimas 24h quando ele é cadastrado.",
-     {"destino": S_DEST, "quantidade": {"type": "integer", "description": f"1 a {PING_MAX}, padrão 5"}}, ["destino"]),
-    ("traceroute", tool_traceroute, "Traceroute agora até um destino (saltos e latência de cada um).", {"destino": S_DEST}, ["destino"]),
-    ("historico", tool_historico, "Histórico de um destino cadastrado: latência média/mín/máx, perda, disponibilidade, piores momentos e incidentes.",
-     {"destino": S_DEST, "horas": {"type": "integer", "description": "janela em horas (1 a 720), padrão 24"}}, ["destino"]),
-    ("incidentes", tool_incidentes, "Lista incidentes (quedas, perda, latência alta…) do período ou só os abertos.",
-     {"horas": {"type": "integer", "description": "janela em horas, padrão 24"}, "apenas_abertos": {"type": "boolean"}}, []),
-    ("mikrotik", tool_mikrotik, "Roteador MikroTik: CPU, RAM, temperatura, uptime e tráfego/link das interfaces.", {}, []),
-    ("dns", tool_dns, "Servidores DNS monitorados: se respondem e com que latência.", {}, []),
-    ("speedtest", tool_speedtest, "Últimos testes de velocidade (download, upload, latência).", {}, []),
-    ("servidor", tool_servidor, "Servidor onde roda o NetNOC: CPU, RAM, temperatura, disco e coletores.", {}, []),
-    ("diagnosticar", tool_diagnosticar, "Investiga AGORA a causa de um problema (gateway, internet, DNS, MikroTik/PPPoE/WAN, quedas simultâneas, traceroute) "
-     "e devolve a causa provável. Sem destino: checa a rede toda.", {"destino": S_DEST}, []),
-    ("diagnosticos", tool_diagnosticos, "Quedas e alertas recentes COM a causa encontrada pelo diagnóstico automático (operadora, energia, aparelho, DNS…). "
-     "Use para 'por que caiu', 'o que aconteceu essa noite'.", {"horas": {"type": "integer", "description": "janela em horas, padrão 48"}}, []),
-    ("banda", tool_banda, "Quem está usando a internet AGORA: download/upload por aparelho (MikroTik).", {}, []),
-    ("aparelhos", tool_aparelhos, "Aparelhos da rede (DHCP do MikroTik): total, conectados e os novos dos últimos dias.",
-     {"dias": {"type": "integer", "description": "janela para 'novos', padrão 7"}}, []),
-    ("acao", tool_acao, "PEDE ao usuário a confirmação de uma ação no roteador: reiniciar_pppoe, acordar (Wake-on-LAN), bloquear ou "
-     "desbloquear um aparelho. Não executa: envia botões Sim/Cancelar. Use só quando o usuário pedir a ação.",
-     {"acao": {"type": "string", "enum": ["reiniciar_pppoe", "acordar", "bloquear", "desbloquear"]},
-      "aparelho": {"type": "string", "description": "nome, IP ou MAC do aparelho (não precisa para reiniciar_pppoe)"}}, ["acao"]),
-]
-_TOOL_FN = {n: f for n, f, *_ in TOOLS}
-
-
-def run_tool(name, args):
-    fn = _TOOL_FN.get(name)
-    if not fn:
-        return {"erro": f"ferramenta desconhecida: {name}"}
-    try:
-        args = {k: v for k, v in (args or {}).items() if v is not None}
-        return fn(**args)
-    except TypeError:
-        return {"erro": "parâmetros inválidos"}
-    except (ValueError, RuntimeError) as e:
-        return {"erro": str(e)}
-    except Exception as e:
-        return {"erro": type(e).__name__}
-
-
-# ------------------------------------------------------------------ IA
-def _system_prompt():
-    names = ", ".join(t["name"] for t in monitor.get_targets()) or "nenhum"
-    return (
-        f"Você é o assistente do {monitor.get_app_name()}, o painel de monitoramento da rede do usuário. "
-        f"Agora são {datetime.now().strftime('%d/%m/%Y %H:%M')}. Destinos cadastrados: {names}.\n"
-        "Regras:\n"
-        "- Responda em português do Brasil, curto e direto, como um analista de NOC falando com o dono da rede.\n"
-        "- Texto puro para o Telegram: NADA de markdown (sem **, #, ``` ou tabelas). Use quebras de linha e poucos emojis (✅ ⚠️ ❌ 📶).\n"
-        "- Para qualquer dado da rede use as ferramentas. Nunca invente números. Se uma ferramenta der erro, diga qual.\n"
-        "- No ping, compare com o histórico de 24h quando houver e diga se está normal, pior ou melhor.\n"
-        "- Para 'por que caiu' ou 'o que aconteceu' use diagnosticos; para investigar um problema agora use diagnosticar.\n"
-        "- Ações no roteador só pela ferramenta acao, que envia botões de confirmação. Nunca diga que executou: diga que mandou o pedido de confirmação.\n"
-        "- Latência: até 30 ms ótima, 30–80 ms ok, acima de 100 ms ruim. Perda acima de 1% merece atenção.\n"
-        "- Se o pedido não tiver relação com a rede, responda em uma frase que você cuida só do monitoramento."
-    )
-
-
-def _decls_openai():
-    return [{"type": "function", "function": {"name": n, "description": d,
-             "parameters": {"type": "object", "properties": p, "required": r}}} for n, _, d, p, r in TOOLS]
-
-
-def _decls_gemini():
-    out = []
-    for n, _, d, p, r in TOOLS:
-        dd = {"name": n, "description": d}
-        if p:
-            dd["parameters"] = {"type": "object", "properties": p, "required": r}
-        out.append(dd)
-    return [{"functionDeclarations": out}]
-
-
-def _http_err(r, who):
-    try:
-        j = r.json()
-        msg = (j.get("error") or {}).get("message") if isinstance(j.get("error"), dict) else j.get("error")
-    except Exception:
-        msg = ""
-    code = {400: "requisição recusada", 401: "chave inválida", 403: "chave sem permissão", 404: "modelo não encontrado",
-            429: "limite da cota grátis atingido, tente em 1 minuto"}.get(r.status_code, f"HTTP {r.status_code}")
-    msg = re.sub(r"(AIza|gsk_)[A-Za-z0-9_\-]+", "***", str(msg or ""))[:160]
-    return RuntimeError(f"{who}: {code}" + (f" ({msg})" if msg and r.status_code not in (401, 429) else ""))
-
-
-def _post(url, headers, body, who):
-    try:
-        r = requests.post(url, headers=headers, json=body, timeout=45)
-    except requests.Timeout:
-        raise RuntimeError(f"{who}: sem resposta (timeout)")
-    except Exception as e:
-        raise RuntimeError(f"{who}: {type(e).__name__}")
-    if not r.ok:
-        raise _http_err(r, who)
-    return r.json()
-
-
-def ask_groq(cfg, history, question, tools=True):
-    msgs = [{"role": "system", "content": _system_prompt()}]
-    msgs += [{"role": "user" if role == "u" else "assistant", "content": txt} for _, role, txt in history]
-    msgs.append({"role": "user", "content": question})
-    url = "https://api.groq.com/openai/v1/chat/completions"
-    hdr = {"Authorization": f"Bearer {cfg['groq_key']}"}
-    used = []
-    for _ in range(MAX_ROUNDS + 1):
-        body = {"model": cfg["groq_model"], "messages": msgs, "temperature": 0.3, "max_tokens": 2048}
-        if cfg["groq_model"].startswith("openai/gpt-oss"):
-            body["reasoning_effort"] = "low"      # raciocínio curto: resposta mais rápida e sem estourar max_tokens
-        if tools and len(used) < MAX_ROUNDS:
-            body["tools"], body["tool_choice"] = _decls_openai(), "auto"
-        j = _post(url, hdr, body, "Groq")
-        m = (j.get("choices") or [{}])[0].get("message") or {}
-        calls = m.get("tool_calls") or []
-        if not calls:
-            txt = (m.get("content") or "").strip()
-            if not txt:
-                raise RuntimeError("Groq: resposta vazia (" + str((j.get("choices") or [{}])[0].get("finish_reason")) + ")")
-            return txt, used
-        msgs.append({"role": "assistant", "content": m.get("content") or "", "tool_calls": calls})
-        for c in calls:
-            fn = c.get("function") or {}
-            try:
-                args = json.loads(fn.get("arguments") or "{}")
-            except ValueError:
-                args = {}
-            used.append(fn.get("name"))
-            res = run_tool(fn.get("name"), args)
-            msgs.append({"role": "tool", "tool_call_id": c.get("id"), "content": json.dumps(res, ensure_ascii=False, default=str)[:12000]})
-    return "Não consegui fechar a resposta (muitas consultas). Tente uma pergunta mais específica.", used
-
-
-def ask_gemini(cfg, history, question, tools=True):
-    contents = [{"role": "user" if role == "u" else "model", "parts": [{"text": txt}]} for _, role, txt in history]
-    contents.append({"role": "user", "parts": [{"text": question}]})
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{cfg['gemini_model']}:generateContent"
-    hdr = {"x-goog-api-key": cfg["gemini_key"]}
-    used = []
-    for _ in range(MAX_ROUNDS + 1):
-        body = {"systemInstruction": {"parts": [{"text": _system_prompt()}]}, "contents": contents,
-                "generationConfig": {"maxOutputTokens": 4096}}   # Gemini 3 recomenda a temperatura padrão
-        if tools and len(used) < MAX_ROUNDS:
-            body["tools"] = _decls_gemini()
-        j = _post(url, hdr, body, "Gemini")
-        cand = (j.get("candidates") or [{}])[0]
-        content = cand.get("content") or {}
-        parts = content.get("parts") or []
-        calls = [p["functionCall"] for p in parts if "functionCall" in p]
-        if not calls:
-            txt = "".join(p.get("text", "") for p in parts if not p.get("thought")).strip()
-            if not txt and cand.get("finishReason") not in (None, "STOP"):
-                raise RuntimeError(f"Gemini: resposta bloqueada ({cand.get('finishReason')})")
-            return txt, used
-        contents.append({"role": "model", "parts": parts})   # devolve como veio (inclui thoughtSignature)
-        resp = []
-        for c in calls:
-            used.append(c.get("name"))
-            res = run_tool(c.get("name"), c.get("args") or {})
-            resp.append({"functionResponse": {"name": c.get("name"), "response": {"resultado": res}}})
-        contents.append({"role": "user", "parts": resp})
-    return "Não consegui fechar a resposta (muitas consultas). Tente uma pergunta mais específica.", used
-
-
-def ask(question, chat="test", cfg=None, tools=True):
-    cfg = cfg or get_cfg()
-    p = cfg["provider"]
-    if p == "gemini" and cfg["gemini_key"]:
-        fn = ask_gemini
-    elif p == "groq" and cfg["groq_key"]:
-        fn = ask_groq
-    else:
-        raise RuntimeError("IA não configurada")
-    now = time.time()
-    h = _hist.setdefault(chat, deque(maxlen=HIST_LEN))
-    while h and now - h[0][0] > HIST_TTL:
-        h.popleft()
-    txt, used = fn(cfg, list(h), question, tools)
-    txt = _plain(txt) or "Sem resposta da IA."
-    h.append((now, "u", question[:1000]))
-    h.append((now, "a", txt[:1500]))
-    return txt, used
-
-
-def _plain(t):
-    """Tira o markdown que escapar (o Telegram mostraria os asteriscos)."""
-    t = re.sub(r"```[a-z]*\n?", "", t or "")
-    t = re.sub(r"\*\*(.+?)\*\*", r"\1", t)
-    t = re.sub(r"(?m)^#{1,6}\s*", "", t)
-    t = re.sub(r"(?m)^\s*[-*]\s+", "• ", t)
-    return t.strip()
-
-
-# ------------------------------------------------------------------ comandos (sem IA)
-def _line_target(t):
-    on = t.get("online")
-    ico = "⚪" if on is None else ("✅" if on and (t.get("loss_pct") or 0) < 5 else ("⚠️" if on else "❌"))
-    if on is False:
-        return f"{ico} {t['name']}: OFFLINE"
-    return f"{ico} {t['name']}: {_ms(t.get('latency'))} ms · perda {_pct(t.get('loss_pct'), 0)}%"
-
-
-def cmd_status():
-    s = tool_status()
-    lines = [f"📡 {monitor.get_app_name()} · {s['agora']}",
-             f"Internet: {'✅ online' if s['internet_online'] else '❌ OFFLINE'}" + (f" · IP {s['ip_publico']}" if s['ip_publico'] else ""),
-             f"Média: {_ms(s['latencia_media_ms'])} ms · jitter {_ms(s['jitter_medio_ms'])} ms · perda {_pct(s['perda_media_pct'])}%", ""]
-    lines += [_line_target({"name": d["nome"], "online": d["online"], "latency": d["latencia_ms"], "loss_pct": d["perda_pct"]})
-              for d in s["destinos"]]
-    inc = s["incidentes_abertos"]
-    lines += ["", "Alertas abertos:" if inc else "Nenhum alerta aberto ✅"]
-    lines += [f"• {i['severidade']}: {i['mensagem']} (há {i['duracao']})" for i in inc[:8]]
-    return "\n".join(lines)
-
-
-def cmd_ping(arg):
-    parts = arg.split()
-    if not parts:
-        return "Uso: /ping <destino ou IP> [quantidade]\nEx.: /ping 8.8.8.8   /ping Google DNS 10"
-    n = 5
-    if len(parts) > 1 and parts[-1].isdigit():
-        n = int(parts.pop())
-    r = tool_ping(" ".join(parts), n)
-    amostras = " ".join("×" if a is None else _ms(a) for a in r["amostras_ms"])
-    head = "✅" if r["recebidos"] == r["enviados"] else ("❌" if not r["recebidos"] else "⚠️")
-    lines = [f"{head} {r['destino']} ({r['host']}, {r['tipo'].upper()})",
-             f"{r['recebidos']}/{r['enviados']} respostas · perda {_pct(r['perda_pct'], 0)}%"]
-    if r["recebidos"]:
-        lines.append(f"mín {_ms(r['min_ms'])} · média {_ms(r['media_ms'])} · máx {_ms(r['max_ms'])} ms" +
-                     (f" · jitter {_ms(r['jitter_ms'])} ms" if r["jitter_ms"] is not None else ""))
-    lines.append(f"amostras: {amostras}")
-    h = r.get("historico_24h")
-    if h and h.get("latencia_media_ms") is not None:
-        lines.append(f"24 h: média {_ms(h['latencia_media_ms'])} ms · disponibilidade {_pct(h['disponibilidade_pct'], 2)}%")
-    return "\n".join(lines)
-
-
-def cmd_trace(arg):
-    if not arg.strip():
-        return "Uso: /trace <destino ou IP>"
-    r = tool_traceroute(arg.strip())
-    lines = [f"🧭 traceroute {r['host']}"]
-    lines += [f"{h['n']:>2}  {h['ip']:<16} {(_ms(h['ms']) + ' ms') if h['ms'] is not None else '*'}" for h in r["saltos"]]
-    return "\n".join(lines) if r["saltos"] else "Traceroute sem resposta."
-
-
-def cmd_alertas():
-    r = tool_incidentes(24)
-    abertos = [i for i in r["incidentes"] if i["fim"] == "em aberto"]
-    lines = [f"🚨 Abertos: {len(abertos)}"] + [f"• {i['severidade']}: {i['mensagem']} (há {i['duracao']})" for i in abertos[:10]]
-    fech = [i for i in r["incidentes"] if i["fim"] != "em aberto"]
-    lines += ["", f"Resolvidos nas últimas 24 h: {len(fech)}"]
-    lines += [f"• {i['inicio']} {i['destino']}: {i['mensagem']} ({i['duracao']})" for i in fech[:10]]
-    return "\n".join(lines)
-
-
-def cmd_mk():
-    r = tool_mikrotik()
-    if not r["ativo"]:
-        return "Integração MikroTik desativada."
-    lines = [f"🛜 MikroTik {r['modelo'] or ''} · RouterOS {r['routeros'] or ''}" + (" (dados atrasados)" if r["dados_atrasados"] else ""),
-             f"CPU {r['cpu_pct']}% · RAM {r['ram_pct']}% · {r['temperatura_c'] if r['temperatura_c'] is not None else '--'}°C · ligado há {r['ligado_ha'] or '--'}", ""]
-    lines += [f"{'🟢' if i['link'] else '🔴'} {i['nome']}: ↓ {i['download']} ↑ {i['upload']}" for i in r["interfaces"]]
-    return "\n".join(lines)
-
-
-# ------------------------------------------------------------------ ações com confirmação
-def _kb(token, yes="✅ Sim", no="✖ Cancelar"):
-    return {"inline_keyboard": [[{"text": yes, "callback_data": f"a:{token}:y"}, {"text": no, "callback_data": f"a:{token}:n"}]]}
-
-
-def propose(chat, kind, arg=None, ttl=ACTION_TTL):
-    """Prepara a ação e devolve (texto, teclado). Nada é executado antes do "Sim"."""
-    from netnoc.bot import actions
-    if not get_cfg()["actions"]:
-        return ("🔒 As ações no roteador estão desligadas. Ligue em Configurações → Alertas → Bot e IA → "
-                "\"Permitir ações no roteador\".", None)
-    try:
-        if kind == "pppoe":
-            cl = [c for c in actions.pppoe_clients() if not c["disabled"]]
-            if not cl:
-                return ("Nenhuma conexão PPPoE encontrada no MikroTik.", None)
-            args, desc = {"name": cl[0]["name"]}, f"⚠️ Reiniciar a conexão {cl[0]['name']}?\nA internet cai por uns 10 a 30 segundos."
-        elif kind in ("wake", "block", "unblock"):
-            if not str(arg or "").strip():
-                return ("Diga qual aparelho (nome, IP ou MAC).", None)
-            dev = actions.find_device(arg)
-            label = f"{dev['name']} ({dev.get('ip') or '?'}{', ' + dev['mac'] if dev.get('mac') else ''})"
-            args = {"dev": dev}
-            desc = {"wake": f"⏰ Ligar {label} pela rede (Wake-on-LAN)?",
-                    "block": f"🚫 Bloquear {label}?\nEle fica sem internet e sem acesso aos outros aparelhos até você liberar.",
-                    "unblock": f"✅ Liberar {label}?"}[kind]
-        else:
-            return ("Ação desconhecida.", None)
-    except actions.ActionError as e:
-        return (f"⚠️ {e}", None)
-    token = secrets.token_urlsafe(8)
-    _pending[token] = {"kind": kind, "args": args, "chat": str(chat), "exp": time.time() + ttl, "desc": desc}
-    for k in [k for k, v in _pending.items() if v["exp"] < time.time()]:
-        _pending.pop(k, None)
-    return desc, _kb(token)
-
-
-def execute(p):
-    from netnoc.bot import actions
-    a = p["args"]
-    try:
-        if p["kind"] == "pppoe":
-            r = actions.restart_pppoe(a["name"])
-        elif p["kind"] == "wake":
-            r = actions.wake(a["dev"])
-        elif p["kind"] == "block":
-            r = actions.block(a["dev"])
-        elif p["kind"] == "unblock":
-            r = actions.unblock(a["dev"])
-        else:
-            r = "Ação desconhecida."
-        ok = True
-    except actions.ActionError as e:
-        r, ok = f"⚠️ Não deu: {e}", False
-    except Exception as e:
-        r, ok = f"⚠️ Erro inesperado ({type(e).__name__})", False
-    target = a.get("name") or (a.get("dev") or {}).get("name") or ""
-    db.audit("telegram", "", f"acao:{p['kind']}", f"{target} -> {'ok' if ok else 'falhou'}")
-    monitor.log_event(f"Ação pelo Telegram: {p['kind']} {target} ({'ok' if ok else 'falhou'})", "Info")
-    return r
-
-
-def cmd_banda():
-    from netnoc.bot import actions
-    r = actions.bandwidth_top(3)
-    if not r["devices"]:
-        return "📶 Ninguém usando a internet de forma relevante agora."
-    L = [f"📶 Agora: ↓ {_bps(r['total_down_bps'])} · ↑ {_bps(r['total_up_bps'])}"]
-    L += [f"{i}. {d['name']}: ↓ {_bps(d['down_bps'])} ↑ {_bps(d['up_bps'])}" for i, d in enumerate(r["devices"], 1)]
-    return "\n".join(L)
-
-
-def cmd_aparelhos():
-    from netnoc.bot import actions
-    devs = actions.devices()
-    if not devs:
-        return "Nenhum aparelho conhecido: a lista vem do DHCP do MikroTik."
-    lim = time.time() - 7 * 86400
-    novos = [d for d in devs if (d["first_seen"] or 0) >= lim]
-    L = [f"📱 {sum(1 for d in devs if d['active'])} conectados agora · {len(devs)} conhecidos"]
-    if novos:
-        L += ["", "Novos nos últimos 7 dias:"] + [f"• {d['hostname'] or 'sem nome'} — {d['ip']} ({d['mac']}) desde {_hm(d['first_seen'])}" for d in novos[:12]]
-    return "\n".join(L)
-
-
-def cmd_bloqueados():
-    from netnoc.bot import actions
-    b = actions.blocked()
-    return ("🚫 Bloqueados:\n" + "\n".join(f"• {x['ip']} {x['comment'].replace('NetNOC: ', '')}" for x in b)) if b else "Nenhum aparelho bloqueado."
-
-
-def on_new_devices(devs):
-    """Gancho do monitor: aparelho nunca visto apareceu no DHCP."""
-    cfg = get_cfg()
-    tg = monitor.get_telegram()
-    if not (cfg["new_devices"] and tg.get("bot_token") and tg.get("chat_id")):
-        return
-    for d in devs[:5]:
-        text = (f"📱 Aparelho novo na rede\nNome: {d.get('hostname') or 'sem nome'}\nIP: {d.get('ip') or '?'}\nMAC: {d.get('mac')}\n"
-                f"Visto agora ({_hm(time.time())}).")
-        kb = None
-        if cfg["actions"]:
-            token = secrets.token_urlsafe(8)
-            dev = {"name": d.get("hostname") or d.get("ip"), "ip": d.get("ip"), "mac": d.get("mac")}
-            _pending[token] = {"kind": "block", "args": {"dev": dev}, "chat": str(tg["chat_id"]), "exp": time.time() + NEWDEV_TTL,
-                               "desc": text, "newdev": True}
-            kb = _kb(token, "🚫 Bloquear", "👍 É meu")
-        else:
-            text += "\nSe não conhece, ligue as ações no bot para poder bloquear daqui."
-        _send(tg["bot_token"], tg["chat_id"], text, kb)
-
 
 HELP = ("🤖 Comandos:\n"
         "/status — resumo da rede\n"
@@ -748,7 +149,20 @@ HELP = ("🤖 Comandos:\n"
         "/pppoe — reiniciar a conexão (pede confirmação)\n"
         "/acordar <aparelho> — liga o PC pela rede\n"
         "/bloquear <aparelho> · /desbloquear <aparelho> · /bloqueados\n"
+        "/cameras [nome ou número] — foto das câmeras agora\n"
+        "/portas — portas do MikroTik\n"
+        "/desligar <porta ou pppoe> [min] · /religar <porta>\n"
+        "/reiniciar mikrotik | dvr | servidor | netnoc | tudo\n"
+        "/medir [segundos] — velocidade real da internet (rode um speedtest junto)\n"
+        "/log [pppoe|system|texto] — log do MikroTik\n"
+        "/backup — manda o backup da configuração agora\n"
+        "/saude — saúde do NetNOC, último backup e vigia externo\n"
         "/limpar — esquece a conversa\n")
+
+
+def _strip_acc(s):
+    import unicodedata
+    return "".join(ch for ch in unicodedata.normalize("NFD", s) if unicodedata.category(ch) != "Mn")
 
 
 def handle(text, chat):
@@ -803,9 +217,41 @@ def handle(text, chat):
                 return propose(chat, "block", arg)
             if c in ("desbloquear", "liberar"):
                 return propose(chat, "unblock", arg)
+            if c in ("cameras", "câmeras", "camera", "câmera", "fotos"):
+                return cmd_cameras(chat, arg) or "📷 Enviado."
+            if c == "portas":
+                return cmd_portas()
+            if c in ("desligar", "desativar"):
+                mm = re.match(r"^(.*?)(?:\s+(\d{1,4})\s*(?:min|m)?)?$", arg.strip())
+                return propose(chat, "port_off", (mm.group(1).strip(), int(mm.group(2)) if mm.group(2) else None))
+            if c in ("religar", "ativar", "ligarporta"):
+                return propose(chat, "port_on", (arg.strip(), None))
+            if c == "reiniciar":
+                alvo = _strip_acc(arg.strip().lower())
+                kmap = {"mikrotik": "reboot_mikrotik", "roteador": "reboot_mikrotik", "mk": "reboot_mikrotik", "dvr": "reboot_dvr",
+                        "cameras": "reboot_dvr", "servidor": "reboot_servidor", "pi": "reboot_servidor", "raspberry": "reboot_servidor",
+                        "netnoc": "reboot_netnoc", "tudo": "reboot_all", "": "reboot_all"}
+                if alvo not in kmap:
+                    return "Uso: /reiniciar mikrotik | dvr | servidor | netnoc | tudo"
+                return propose(chat, kmap[alvo])
             if c in ("diario", "diário", "resumo"):
                 from netnoc.analise import story
                 return story.diary(24)
+            if c == "backup":
+                from netnoc.nucleo import guarda
+                threading.Thread(target=guarda.run_backup, args=("pedido no Telegram",), daemon=True).start()
+                return "💾 Gerando o backup, chega em instantes."
+            if c in ("medir", "velocidade", "speedtest"):
+                from netnoc.coleta import medir
+                mm = re.match(r"^\s*(\d{1,3})?", arg or "")
+                st = medir.start(int(mm.group(1)) if mm and mm.group(1) else medir.DEFAULT_S, who="telegram",
+                                 on_done=_medir_done(str(chat)))
+                return (f"📶 Medindo a internet ({st['iface']}) por {st['seconds']} s.\n"
+                        "Rode um speedtest AGORA no celular ou no PC (fast.com, speedtest.net). O resultado chega aqui.")
+            if c == "log":
+                return cmd_log(arg)
+            if c in ("saude", "saúde", "health"):
+                return cmd_saude()
             if c == "limpar":
                 _hist.pop(chat, None)
                 return "Conversa esquecida."
@@ -943,11 +389,34 @@ def _loop():
 
 def start(api):
     """api: funções do main.py (overview, targets, incidents, series, uptime, mikrotik_status,
-    mikrotik_ifaces, dns, speedtests, system). Inicia o leitor do Telegram em segundo plano."""
+    mikrotik_ifaces, dns, wan_peak, system). Inicia o leitor do Telegram em segundo plano."""
     _api.update(api)
     if on_new_devices not in monitor.NEW_DEVICE_HOOKS:
         monitor.NEW_DEVICE_HOOKS.append(on_new_devices)
+    threading.Thread(target=_restart_notice, name="aibot-volta", daemon=True).start()
+    try:
+        from netnoc.bot import actions
+        actions.resume_local_reverts()         # porta desligada com volta pelo NetNOC: retoma depois de um reinício
+    except Exception as e:
+        print(f"[aibot] volta automática: {e}", flush=True)
     if not _state.get("thread"):
         th = threading.Thread(target=_loop, name="aibot", daemon=True)
         _state["thread"] = True
         th.start()
+
+
+# dependências entre os módulos do bot: no fim do arquivo porque há ciclos (só usadas na hora da chamada)
+from netnoc.bot.comandos import cmd_alertas, cmd_aparelhos, cmd_banda, cmd_bloqueados, cmd_cameras, cmd_log, cmd_mk, cmd_ping, cmd_portas, cmd_saude, cmd_status, cmd_trace  # noqa: E402
+from netnoc.bot.confirmar import _restart_notice, execute, on_new_devices, propose  # noqa: E402
+from netnoc.bot.ferramentas import _find_target, _medir_done, _rate_ok  # noqa: E402
+from netnoc.bot.ia import ask  # noqa: E402
+
+
+# reexporta as partes que saíram deste arquivo (v4.4): o resto do projeto e os testes continuam usando aibot.X
+from netnoc.bot import comandos as _comandos, confirmar as _confirmar, ferramentas as _ferramentas, ia as _ia  # noqa: E402
+for _m in (_ferramentas, _ia, _comandos, _confirmar):
+    for _k, _v in vars(_m).items():
+        if not _k.startswith("__") and not isinstance(_v, type(threading)):
+            globals().setdefault(_k, _v)
+del _m, _k, _v
+

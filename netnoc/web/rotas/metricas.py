@@ -21,7 +21,6 @@ def build_overview():
     lats = [v["avg_latency"] for v in onl if v["avg_latency"] is not None]
     jits = [v["avg_jitter"] for v in onl]
     losses = [v["loss_pct"] for v in onl]
-    last_speed = db.query("SELECT * FROM speedtests ORDER BY ts DESC LIMIT 1")
     m = {r["key"]: r["value"] for r in db.query(
         "SELECT key,value FROM meta WHERE key IN ('public_ip','public_ipv6','cpu_pct','mem_pct','temp_c')")}
     return {
@@ -30,7 +29,6 @@ def build_overview():
         "avg_latency": round(sum(lats) / len(lats), 1) if lats else None,
         "avg_jitter": round(sum(jits) / len(jits), 1) if jits else None,
         "avg_loss_pct": round(sum(losses) / len(losses), 2) if losses else None,
-        "speedtest": last_speed[0] if last_speed else None,
         "cpu_pct": m.get("cpu_pct"), "mem_pct": m.get("mem_pct"), "temp_c": m.get("temp_c"),
         "targets": latest,
     }
@@ -63,13 +61,34 @@ def loss_history(range: str = "5m"):
             for t in monitor.get_targets()}
 
 
+@stats.ttl_cache(600)
+def _first_seen():
+    """Primeira medição de cada destino: uma busca no índice por destino (antes: varria todos os pings)."""
+    out = {}
+    for t in monitor.get_targets():
+        r = db.query("SELECT MIN(ts) mn FROM pings WHERE target=?", (t["name"],))
+        if r and r[0]["mn"] is not None:
+            out[t["name"]] = r[0]["mn"]
+    return out
+
+
+@stats.ttl_cache(10)
+def _last_fail():
+    """Última falha de cada destino (índice parcial idx_pings_fail)."""
+    out = {}
+    for t in monitor.get_targets():
+        r = db.query("SELECT MAX(ts) mx FROM pings WHERE target=? AND success=0", (t["name"],))
+        if r and r[0]["mx"] is not None:
+            out[t["name"]] = r[0]["mx"]
+    return out
+
+
 @stats.ttl_cache(10)
 def _targets_payload():
     snap = monitor.window_snapshot()
     up = stats.uptime_pct(86400)
-    first = {r["target"]: r["mn"] for r in db.query("SELECT target, MIN(ts) mn FROM pings GROUP BY target")}
-    last_fail = {r["target"]: r["mx"] for r in db.query(
-        "SELECT target, MAX(ts) mx FROM pings WHERE success=0 GROUP BY target")}
+    first = _first_seen()
+    last_fail = _last_fail()
     out = []
     for t in monitor.get_targets():
         n = t["name"]
@@ -91,6 +110,7 @@ def targets():
 
 
 @router.get("/api/uptime/bars")
+@stats.ttl_cache(60)
 def uptime_bars(hours: int = 24):
     hours = max(1, min(hours, 168))
     bars = stats.hourly_bars(hours)
@@ -98,6 +118,7 @@ def uptime_bars(hours: int = 24):
 
 
 @router.get("/api/sparklines")
+@stats.ttl_cache(30)
 def sparklines():
     return stats.sparklines()
 
@@ -111,7 +132,7 @@ def insights_patterns(days: int = 30):
 def dns_status():
     rows = {r["server"]: r for r in db.query(
         "SELECT d.server, d.latency, d.success FROM dns_checks d JOIN "
-        "(SELECT server, MAX(ts) mts FROM dns_checks WHERE ts>=? GROUP BY server) x "
+        "(SELECT server, MAX(ts) mts FROM dns_checks INDEXED BY idx_dns_time WHERE ts>=? GROUP BY server) x "
         "ON x.server=d.server AND x.mts=d.ts", (time.time() - 3600,))}
     out = []
     for s in monitor.get_dns_servers():
@@ -127,7 +148,7 @@ def dns_history(range: str = "1h"):
     b = 60 if s <= 3600 else (300 if s <= 86400 else (1800 if s <= 7 * 86400 else 3600))
     rows = db.query(
         f"SELECT server, CAST(ts/{b} AS INTEGER)*{b} t, AVG(CASE WHEN success=1 THEN latency END) lat, "
-        f"100.0*SUM(success)/COUNT(*) ok FROM dns_checks WHERE ts>=? GROUP BY server, t ORDER BY server, t",
+        f"100.0*SUM(success)/COUNT(*) ok FROM dns_checks INDEXED BY idx_dns_time WHERE ts>=? GROUP BY server, t ORDER BY server, t",
         (time.time() - s,))
     out = {}
     for r in rows:
@@ -164,12 +185,8 @@ def incidents_summary(days: int = 7):
     return counts
 
 
-@router.get("/api/speedtest/history")
-def speedtest_history(limit: int = 30):
-    return db.query("SELECT * FROM speedtests ORDER BY ts DESC LIMIT ?", (max(1, min(limit, 500)),))
-
-
 @router.get("/api/history/24h")
+@stats.ttl_cache(60)
 def history_24h(metric: str = "latency"):
     if metric not in ("latency", "jitter", "loss_pct"):
         raise HTTPException(400, "Métrica inválida (latency, jitter, loss_pct)")
@@ -240,6 +257,7 @@ def _sla_range(month, days):
 
 
 @router.get("/api/sla")
+@stats.ttl_cache(60)
 def sla_ep(month: Optional[str] = None, days: int = 30):
     s, e = _sla_range(month, days)
     return sla.report(s, e)

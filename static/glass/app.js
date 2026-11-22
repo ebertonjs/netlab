@@ -47,6 +47,48 @@
     setTimeout(() => t.remove(), kind === 'error' ? 6000 : 3500);
   }
 
+  // ------------------------------------------------------------------ erros (v3.14)
+  // Rede de segurança: um erro solto num gráfico/tela não derruba a interface nem fica mudo.
+  // Vai para o console sempre; na tela, no máximo um aviso a cada 30 s.
+  let lastErrToast = 0;
+  function reportError(msg, err) {
+    const text = String(msg || (err && err.message) || err || '');
+    if (!text || /ResizeObserver loop|Script error\.?$|AbortError|Load failed|Failed to fetch|NetworkError/.test(text)) return;
+    console.error('[netnoc]', text, err || '');
+    const now = Date.now();
+    if (now - lastErrToast < 30000 || !document.getElementById('toasts')) return;
+    lastErrToast = now;
+    toast('Algo falhou nesta tela: ' + text.slice(0, 120), 'error');
+  }
+  window.addEventListener('error', e => reportError(e.message, e.error));
+  window.addEventListener('unhandledrejection', e => reportError(e.reason && e.reason.message, e.reason));
+  /** Substituto de um gráfico que falhou: aceita qualquer leitura/escrita/chamada (c.options.plugins.legend.display = …,
+   *  c.data.datasets[0].data = …, c.update()) sem lançar, para o resto da tela seguir desenhando. */
+  function chartStub() {
+    const handler = {
+      get(t, k) {
+        if (k === 'then') return undefined;                       // não é uma Promise
+        if (k === Symbol.iterator) return function* () { /* vazio */ };
+        if (k === Symbol.toPrimitive) return () => '';
+        if (k === 'length') return 0;
+        if (!(k in t.v)) t.v[k] = node();
+        return t.v[k];
+      },
+      set(t, k, v) { t.v[k] = v; return true; },
+      apply() { return undefined; },
+    };
+    function node() { const f = () => {}; f.v = {}; return new Proxy(f, handler); }
+    return node();
+  }
+  /** Executa fn; se lançar, troca o conteúdo de `el` por um aviso em vez de deixar o bloco vazio/quebrado. */
+  function safe(el, fn, label) {
+    try { return fn(); } catch (e) {
+      console.error('[netnoc]', label || '', e);
+      if (el) { el.textContent = ''; el.append(h('div', {class: 'callout', text: (label ? label + ': ' : '') + 'não foi possível mostrar (' + e.message + ')'})); }
+      return null;
+    }
+  }
+
   // ------------------------------------------------------------------ formatação
   const num = v => (typeof v === 'number' && isFinite(v)) ? v : (v != null && v !== '' && isFinite(+v) ? +v : null);
   const ms = (v, d) => { v = num(v); return v == null ? '--' : (v >= 100 ? Math.round(v) : v.toFixed(d == null ? 1 : d)); };
@@ -137,19 +179,15 @@
   }
 
   // ------------------------------------------------------------------ estado
-  const S = {
-    overview: null, active: [], targets: [], spark: {}, system: null, me: null,
-    mikrotik: null, agh: null, recent: [], bars: {}, hist: [], dnsWorst: null,
-  };
-  window.NN = {h, clear, api, post, del, toast, ms, pct, hm, dmhm, dur, ago, bps, num, sevClass,
+  const S = {overview: null, active: [], targets: [], spark: {}, system: null, me: null, cam: null};
+  window.NN = {h, clear, api, post, del, toast, safe, reportError, ms, pct, hm, dmhm, dur, ago, bps, num, sevClass,
     brandSvg, hue, isLocal, sparkArea, S, $};
 
-  // ------------------------------------------------------------------ relógio / data
+  // ------------------------------------------------------------------ data e rede (topo)
   const WD = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
   const MO = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
   function tick() {
     const d = new Date();
-    $('clock').textContent = pad(d.getHours()) + ':' + pad(d.getMinutes());
     $('dateLine').textContent = `${WD[d.getDay()]}, ${d.getDate()} de ${MO[d.getMonth()]}`;
   }
   function renderSub() {
@@ -157,116 +195,26 @@
     $('subLine').textContent = (window.APP_NAME || 'NetNOC') + (ip ? ' · ' + ip : '');
   }
 
-  // ------------------------------------------------------------------ coluna esquerda
-  function renderNow() {
-    const o = S.overview;
-    const online = o ? o.internet_online : null;
-    const icon = $('netIcon');
-    icon.innerHTML = ICO(online === false ? 'wifiOff' : 'wifi');
-    icon.firstChild.style.color = online === false ? 'var(--red)' : 'var(--orange)';
-    icon.firstChild.setAttribute('stroke-width', '1.6');
-    $('netLat').textContent = o ? ms(o.avg_latency) : '--';
-    const lats = o ? Object.values(o.targets || {}).map(t => num(t.latency)).filter(v => v != null) : [];
-    $('netSub').textContent = lats.length
-      ? `↑ ${ms(Math.max(...lats))}  ↓ ${ms(Math.min(...lats))} · jitter ${ms(o.avg_jitter)}`
-      : (online === false ? 'sem resposta' : 'aguardando dados');
-  }
-
-  function renderHours() {
-    const el = clear($('hours'));
-    // latência média por hora (últimas 5 h) + disponibilidade média das barras horárias
-    const byHour = {};
-    for (const p of S.hist) {
-      const hh = Math.floor(p.ts / 3600) * 3600;
-      const a = byHour[hh] || (byHour[hh] = [0, 0]);
-      a[0] += p.latency; a[1]++;
+  // falha da própria coleta (MikroTik, AdGuard…) vira um aviso discreto no topo
+  function renderCollectWarn() {
+    let b = $('collectWarn');
+    if (!b) {
+      b = h('button', {class: 'chip warn h2-warn', id: 'collectWarn', type: 'button', hidden: true, onclick: () => openSheet('config')});
+      $('me').insertBefore(b, $('me').firstChild);
     }
-    const now = Math.floor(Date.now() / 3600000) * 3600;
-    const rows = [];
-    for (let i = 4; i >= 0; i--) {
-      const hh = now - i * 3600;
-      const a = byHour[hh];
-      const ups = [];
-      for (const bars of Object.values(S.bars)) {
-        const b = bars.find(x => x.ts === hh + 3600);
-        if (b && b.pct != null) ups.push(b.pct);
-      }
-      rows.push({hh, lat: a ? a[0] / a[1] : null, up: ups.length ? ups.reduce((x, y) => x + y, 0) / ups.length : null});
-    }
-    const lv = rows.map(r => r.lat).filter(v => v != null);
-    const mn = Math.min(...lv), mx = Math.max(...lv), rng = (mx - mn) || 1;
-    for (const r of rows) {
-      const bad = r.up != null && r.up < 99;
-      const pos = r.lat == null ? 0 : 6 + 88 * (r.lat - mn) / rng;
-      const knob = h('span', {class: 'knob', style: {left: pos + '%'}});
-      el.append(h('div', {class: 'hour'},
-        h('span', {class: 't', text: hm(r.hh)}),
-        h('span', {class: 'ico', trusted: ICO(bad ? 'alert' : 'activity'), style: {color: bad ? 'var(--yellow)' : 'var(--orange)'}}),
-        h('span', {class: 'v', text: r.lat == null ? '--' : ms(r.lat) + ' ms'}),
-        h('span', {class: 'track'}, r.lat == null ? null : knob),
-        h('span', {class: 'u', text: r.up == null ? '--' : pct(r.up) + '%'})));
-    }
-  }
-
-  function renderAgenda() {
-    const el = clear($('agenda'));
-    el.append(h('h4', {text: 'Agora'}));
-    if (!S.active.length) el.append(h('div', {class: 'empty', text: 'Nenhum incidente ativo ✓'}));
-    for (const i of S.active.slice(0, 5)) {
-      el.append(h('div', {class: 'ev ' + sevClass(i.severity), onclick: () => openSheet('incidents')},
-        h('span', {class: 'b'}), h('span', {class: 'w', text: hm(i.started_ts)}),
-        h('span', {class: 'm', text: i.message, title: i.message})));
-    }
-    const rec = S.recent.filter(i => i.resolved_ts).slice(0, 3);
-    if (rec.length) {
-      el.append(h('h4', {text: 'Resolvidos hoje'}));
-      for (const i of rec) {
-        el.append(h('div', {class: 'ev', onclick: () => openSheet('incidents')},
-          h('span', {class: 'b', style: {background: 'var(--green)'}}), h('span', {class: 'w', text: hm(i.resolved_ts)}),
-          h('span', {class: 'm', text: `${i.target} · ${dur(i.resolved_ts - i.started_ts)}`})));
-      }
-    }
-  }
-
-  // ------------------------------------------------------------------ chips
-  function chip(icon, text, opts) {
-    opts = opts || {};
-    const c = h('button', {class: 'chip' + (opts.cls ? ' ' + opts.cls : ''), type: 'button', title: opts.title || '',
-      onclick: opts.open ? () => openSheet(opts.open) : null});
-    if (icon === 'dot') c.append(h('span', {class: 'dot'}));
-    else c.insertAdjacentHTML('afterbegin', ICO(icon));
-    c.append(h('span', {text}));
-    return c;
-  }
-  function renderChips() {
-    const el = clear($('chips'));
-    const o = S.overview, s = S.system;
-    if (o) {
-      el.append(chip('dot', o.internet_online ? 'Internet OK' : 'Internet fora',
-        {cls: o.internet_online ? '' : 'bad', open: 'latency', title: 'Pelo menos um destino respondendo'}));
-      el.append(chip('up', ms(o.avg_latency) + ' ms', {open: 'latency', title: 'Latência média'}));
-      el.append(chip('loss', pct(o.avg_loss_pct) + '% perda', {open: 'latency', cls: (o.avg_loss_pct || 0) > 2 ? 'warn' : ''}));
-    }
-    if (S.active.length) el.append(chip('alert', S.active.length + ' incidente' + (S.active.length > 1 ? 's' : ''), {open: 'incidents'}));
-    if (s) {
-      el.append(chip('cpu', pct(s.cpu_pct, 0) + '%', {open: 'config', title: 'CPU do ' + s.host_label}));
-      if (s.temp_c != null) el.append(chip('thermo', pct(s.temp_c, 1) + ' °C', {open: 'config', cls: s.temp_c > 70 ? 'warn' : ''}));
-      const ws = s.workers || [];
-      const stalled = ws.filter(w => w.status === 'stalled').map(w => w.name);
-      const failing = ws.filter(w => w.status === 'error').map(w => w.name);
-      if (stalled.length) el.append(chip('alert', 'Coletor parado: ' + stalled.join(', '), {cls: 'bad', open: 'config'}));
-      if (failing.length) el.append(chip('alert', 'Falha na coleta: ' + failing.join(', '), {cls: 'warn', open: 'config'}));
-    }
-    if (S.mikrotik && S.mikrotik.enabled) {
-      el.append(chip('router', S.mikrotik.cpu_load != null ? 'MikroTik ' + Math.round(S.mikrotik.cpu_load) + '%' : 'MikroTik',
-        {open: 'mikrotik', cls: S.mikrotik.stale ? 'dim' : ''}));
-    }
-    if (S.agh && S.agh.blocked_pct != null) el.append(chip('shield', 'AdGuard ' + pct(S.agh.blocked_pct) + '%', {open: 'adguard', title: '% bloqueado'}));
-    if (S.dnsWorst != null && S.dnsWorst > 150) el.append(chip('globe', 'DNS lento ' + ms(S.dnsWorst, 0) + ' ms', {open: 'dns', cls: 'warn'}));
+    const ws = (S.system && S.system.workers) || [];
+    const bad = ws.filter(w => w.status === 'error' || w.status === 'stalled');
+    b.hidden = !bad.length;
+    if (!bad.length) return;
+    b.className = 'chip h2-warn ' + (bad.some(w => w.status === 'stalled') ? 'bad' : 'warn');
+    b.title = bad.map(w => `${w.name}: ${w.status === 'stalled' ? 'parado' : (w.error || 'falha')}`).join('\n') + '\n\nAbrir Configurações';
+    b.setAttribute('aria-label', `${bad.length} ${bad.length > 1 ? 'coletas' : 'coleta'} com falha`);
+    clear(b).append(h('span', {trusted: ICO('alert')}), h('b', {text: String(bad.length)}),
+      h('span', {class: 't', text: ` ${bad.length > 1 ? 'coletas' : 'coleta'} com falha`}));
   }
 
   // ------------------------------------------------------------------ cards
-  const cardEls = {};
+  const cardEls = {}, grpEls = {};
   const C = n => window.SKIN.col(n);
   function cardColor() { return C('--spark'); }
 
@@ -301,24 +249,44 @@
     let head = grid.querySelector(':scope > .grid-head');
     if (!head) head = h('div', {class: 'grid-head', 'aria-hidden': 'true'},
       h('span', {text: 'Status'}), h('span', {text: 'Destino'}), h('span', {text: 'Host'}), h('span', {text: 'Latência (1 h)'}));
-    const known = new Set(Object.values(cardEls).map(c => c.card));
-    [...grid.children].forEach(ch => { if (!known.has(ch) && ch !== head) ch.remove(); });
-    if (grid.firstChild !== head) grid.insertBefore(head, grid.firstChild);
     if (!S.targets.length) {
+      [...grid.children].forEach(ch => { if (ch !== head) ch.remove(); });
+      if (grid.firstChild !== head) grid.insertBefore(head, grid.firstChild);
       grid.append(h('div', {class: 'card glass', style: {display: 'grid', placeItems: 'center', cursor: 'pointer'},
         onclick: () => openSheet('config')}, h('span', {text: 'Nenhum destino. Toque para adicionar.'})));
       return;
     }
-    S.targets.forEach((t, i0) => {
-      const i = i0 + 1;           // posição 0 é o cabeçalho
-      let c = cardEls[t.name];
-      if (!c) { c = cardEls[t.name] = buildCard(t); }
-      if (grid.children[i] !== c.card) grid.insertBefore(c.card, grid.children[i] || null);
+    // estado de cada destino primeiro (para poder ordenar: com problema na frente, na página inicial nova)
+    const info = S.targets.map(t => {
       const L = live[t.name] || {};
       const raw = L.online != null ? L.online : t.online;
       const loss = L.loss_pct != null ? L.loss_pct : t.loss_pct;
       // offline só com queda confirmada (incidente aberto ou ≥50% de perda); um ping perdido não pinta o card de vermelho
       const down = S.active.some(i => i.type === 'offline' && i.target === t.name) || (raw === false && (loss || 0) >= 50);
+      return {t, L, raw, loss, down};
+    });
+    let order = info, groups = null;
+    {
+      const prob = l => l.slice().sort((x, y) => (y.down - x.down) || ((y.loss || 0) > 5) - ((x.loss || 0) > 5));
+      groups = [['Internet', prob(info.filter(x => !isLocal(x.t)))], ['Rede local', prob(info.filter(x => isLocal(x.t)))]].filter(g => g[1].length);
+      order = groups.flatMap(g => g[1]);
+    }
+    const cardOf = t => (cardEls[t.name] || (cardEls[t.name] = buildCard(t))).card;
+    const seq = [head];
+    if (groups && groups.length > 1) {
+      for (const [name, l] of groups) {
+        const g = grpEls[name] || (grpEls[name] = h('div', {class: 'grid-grp'}, h('b', {text: name}), h('span')));
+        const ok = l.filter(x => !x.down).length;
+        g.lastChild.textContent = `${ok}/${l.length} ok`;
+        g.classList.toggle('bad', ok < l.length);
+        seq.push(g, ...l.map(x => cardOf(x.t)));
+      }
+    } else order.forEach(x => seq.push(cardOf(x.t)));
+    const keep = new Set(seq);
+    [...grid.children].forEach(ch => { if (!keep.has(ch)) ch.remove(); });
+    seq.forEach((n, i) => { if (grid.children[i] !== n) grid.insertBefore(n, grid.children[i] || null); });
+    order.forEach(({t, L, raw, loss, down}) => {
+      const c = cardEls[t.name];
       const online = raw == null ? null : !down;
       const lat = raw === false ? (L.avg_latency != null ? L.avg_latency : t.latency) : (L.latency != null ? L.latency : t.latency);
       c.card.classList.toggle('off', online === false);
@@ -410,7 +378,15 @@
     $('sheetTitle').textContent = typeof def.title === 'function' ? def.title(params || {}) : def.title;
     const ctx = {id, params: params || {}, body, tools, charts: [], timers: [], cleanups: [], alive: true,
       every(ms_, fn) { const t = setInterval(() => { if (ctx.alive) fn(); }, ms_); ctx.timers.push(t); return t; },
-      chart(el, cfg) { const c = new Chart(el, cfg); ctx.charts.push(c); return c; },
+      chart(el, cfg) {
+        // gráfico que falha (Chart.js ausente, dado estranho) vira aviso no lugar; a tela continua
+        try { const c = new Chart(el, cfg); ctx.charts.push(c); return c; } catch (e) {
+          console.error('[netnoc] gráfico', id, e);
+          const box = el && el.parentElement;
+          if (box) { el.remove(); box.append(h('div', {class: 'callout', text: 'Gráfico indisponível (' + e.message + ')'})); }
+          const stub = chartStub(); ctx.charts.push(stub); return stub;    // ctx.charts[i] continua válido
+        }
+      },
       reopen(p) { openSheet(id, Object.assign({}, ctx.params, p || {})); }};
     cur = ctx;
     $('sheetWrap').hidden = false;
@@ -418,6 +394,8 @@
     markDock(id);
     try { history.replaceState(null, '', location.pathname + location.search + '#' + id + (params && params.name ? '/' + encodeURIComponent(params.name) : '')); } catch (_) { /* ok */ }
     Promise.resolve().then(() => def.render(ctx)).catch(e => {
+      console.error('[netnoc] tela', id, e);
+      if (!ctx.alive) return;
       body.append(h('div', {class: 'panel main'}, h('div', {class: 'callout', text: 'Erro ao carregar: ' + e.message})));
     });
   }
@@ -489,28 +467,17 @@
     } catch (e) { /* 401 já redireciona */ }
   }
   async function loadSlow() {
-    const [sys, bars, hist, rec, mt, agh, dns, cam] = await Promise.all([
-      api('/api/system').catch(() => null),
-      api('/api/uptime/bars?hours=6').catch(() => ({})),
-      api('/api/history/24h').catch(() => []),
-      api('/api/incidents?days=1').catch(() => []),
-      api('/api/mikrotik/status').catch(() => null),
-      api('/api/agh/stats').catch(() => null),
-      api('/api/dns').catch(() => []),
-      api('/api/cam/status').catch(() => null),
-    ]);
-    S.system = sys; S.bars = bars || {}; S.hist = (hist || []).filter(p => p.ts >= Date.now() / 1000 - 6 * 3600);
-    S.recent = rec || []; S.mikrotik = mt; S.agh = agh && agh.ts ? agh : null; S.cam = cam;
-    renderCards();
-    const dl = (dns || []).map(d => num(d.latency)).filter(v => v != null);
-    S.dnsWorst = dl.length ? Math.max(...dl) : null;
-    renderHours(); renderAgenda(); renderChips();
+    const [sys, cam] = await Promise.all([api('/api/system').catch(() => null), api('/api/cam/status').catch(() => null)]);
+    S.system = sys; S.cam = cam;
+    each(renderCards, renderCollectWarn);
   }
+  // cada bloco desenha sozinho: um que falhe não impede os outros (o erro vai para o console)
+  function each(...fns) { for (const f of fns) { try { f(); } catch (e) { reportError((f.name || 'bloco') + ': ' + e.message, e); } } }
   function applySnapshot(snap) {
     if (!snap) return;
     S.overview = snap.overview; S.active = snap.incidents || [];
     window.__lastSnapshot = snap;
-    renderNow(); renderSub(); renderChips(); renderAgenda(); renderCards();
+    each(renderSub, renderCards);
     document.dispatchEvent(new CustomEvent('nn:snapshot', {detail: snap}));
   }
   function startStream() {
@@ -528,7 +495,7 @@
     renderDock();
     themeIcon();
     window.SKIN.syncServer();
-    tick(); setInterval(tick, 1000);
+    tick(); setInterval(tick, 30000);
     for (let i = 0; i < 6; i++) $('grid').append(h('div', {class: 'skeleton'}));
     try {
       const [me, info] = await Promise.all([api('/api/me'), api('/api/settings/appname').catch(() => null)]);

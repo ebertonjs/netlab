@@ -1,5 +1,6 @@
-// NetNOC v3.4 — blocos da página inicial: indicadores, disponibilidade por destino, rede (MikroTik),
-// câmeras, AdGuard, DNS, Raspberry Pi e mapa de incidentes. Uma chamada (/api/home) a cada 30 s.
+// NetNOC v4.0 — página inicial: estado da rede e causa, 4 números ao vivo, linha do tempo e blocos de detalhes
+// (disponibilidade, MikroTik com o pico da WAN, DNS, AdGuard, servidor, câmeras, mapa de incidentes).
+// Uma chamada (/api/home) a cada 30 s; os números e a chegada de incidentes vêm pelo tempo real (SSE).
 'use strict';
 (function () {
   const {h, clear, api, ms, pct, hm, dmhm, dur, bps, num, openSheet, $} = window.NN;
@@ -84,35 +85,6 @@
     el.append(tl);
   }
 
-  // ------------------------------------------------------------------ 1. indicadores
-  function kpi(orb, icon, label, value, sub, opts) {
-    opts = opts || {};
-    return h('button', {class: 'hx-kpi glass' + (opts.cls ? ' ' + opts.cls : ''), type: 'button', title: opts.title || '',
-      onclick: opts.open ? () => openSheet(opts.open) : null},
-    h('span', {class: 'orb ' + orb, trusted: ICO(icon)}),
-    h('span', {class: 'hx-kv'}, h('span', {class: 'l', text: label}), h('span', {class: 'v'}, value), h('span', {class: 's', text: sub || ''})));
-  }
-  function renderKpis(el) {
-    const k = D.kpi || {};
-    const upc = k.up_today == null ? 'grey' : k.up_today >= 99.5 ? 'green' : k.up_today >= 98 ? '' : 'red';
-    const sp = k.speedtest;
-    const q = k.quiet || {};
-    el.append(
-      kpi(upc, 'check', 'Disponível hoje', k.up_today == null ? '--' : pct(k.up_today, 2) + '%',
-        `7 d ${pct(k.up_7d, 2)}% · 30 d ${pct(k.up_30d, 2)}%`, {open: 'sla', title: 'Média dos destinos'}),
-      kpi('blue', 'globe', 'IP público', k.public_ip || '--',
-        k.public_ip_since ? 'mesmo IP há ' + since(k.public_ip_since) : '', {title: 'Muda quando a operadora troca seu IP'}),
-      kpi('', 'gauge', 'Último speedtest', sp && sp.download != null ? h('span', {}, '↓ ' + Math.round(sp.download), h('small', {text: ' Mbps'})) : '--',
-        sp ? `↑ ${sp.upload != null ? Math.round(sp.upload) : '--'} Mbps · ${dmhm(sp.ts)}`
-          : (k.speedtest_auto && k.speedtest_auto.enabled ? 'automático às ' + k.speedtest_auto.time : 'nenhum teste ainda'),
-        {open: 'tools'}),
-      q.now
-        ? kpi('red', 'alert', 'Queda em andamento', q.target || '--', 'veja os incidentes', {open: 'incidents', cls: 'bad'})
-        : kpi('', 'clock', 'Sem quedas há', q.since ? since(q.since) : '--', q.target ? 'última: ' + q.target : 'nenhuma queda registrada', {open: 'incidents'}),
-      kpi(k.month_incidents ? '' : 'green', 'alert', 'Incidentes no mês', String(k.month_incidents == null ? '--' : k.month_incidents),
-        k.month_mttr_s ? 'resolvidos em ' + dur(k.month_mttr_s) + ' (média)' : 'nenhum resolvido', {open: 'incidents'}));
-  }
-
   // ------------------------------------------------------------------ 2. disponibilidade por destino
   function renderAvail(el) {
     const A = D.avail || [];
@@ -160,7 +132,14 @@
         bar(up ? Math.max(2, 100 * ((i.rx_bps || 0) + (i.tx_bps || 0)) / mx) : 0)));
     }
     if (st.stale) list.append(h('div', {class: 'hint', text: 'Sem dados novos do MikroTik — verifique a conexão.'}));
-    el.append(list, h('div', {class: 'hx-sep'}));
+    el.append(list);
+    // v4.0: o pico real da internet (porta WAN), no lugar do speedtest
+    const pk = D.kpi && D.kpi.wan_peak;
+    if (pk) el.append(h('div', {class: 'hx-wan', title: 'Maior tráfego que passou pela porta ' + pk.iface + ' hoje'},
+      ICON('gauge'), h('span', {class: 'l', text: 'Pico hoje na WAN'}),
+      h('b', {text: '↓ ' + bps(pk.rx_bps)}), h('span', {class: 'w', text: hm(pk.rx_ts)}),
+      pk.tx_bps != null ? h('b', {text: '↑ ' + bps(pk.tx_bps)}) : null, pk.tx_ts ? h('span', {class: 'w', text: hm(pk.tx_ts)}) : null));
+    el.append(h('div', {class: 'hx-sep'}));
     el.append(lab('network', 'Aparelhos na rede', h('span', {}, h('b', {text: String(N.active)}), ' ativos' + (N.new_24h ? ` · ${N.new_24h} novo${N.new_24h > 1 ? 's' : ''} hoje` : ''))));
     const dl = h('div', {class: 'hx-devs'});
     for (const d of N.hosts || []) {
@@ -279,37 +258,204 @@
     try { fn(p); } catch (e) { console.error(e); p.append(h('div', {class: 'hint', text: 'Erro ao montar este bloco.'})); }
     return p;
   }
-  function render() {
+  // ================================================================== página inicial nova (v3.14)
+  // 1) estado + causa + 4 números  2) linha do tempo (aberta só com problema)  3) destinos (app.js)
+  // 4) detalhes em blocos que a pessoa reordena, recolhe ou esconde (salvo por usuário no servidor)
+  const BLOCKS = {
+    avail: {t: 'Disponibilidade por destino', span: 2, fn: renderAvail},
+    net: {t: 'MikroTik e aparelhos', fn: renderNet, need: () => D.net},
+    dns: {t: 'DNS', fn: renderDns},
+    agh: {t: 'AdGuard Home', fn: renderAgh, need: () => D.agh},
+    sys: {t: 'Servidor', fn: renderSys},
+    cams: {t: 'Câmeras', span: 2, fn: renderCams, need: () => D.cams && D.cams.channels.length},
+    heat: {t: 'Incidentes · 7 dias × 24 h', fn: el => { el.append(lab('calendar', 'Incidentes · 7 dias × 24 h')); el.append(heatBox()); }},
+  };
+  const DEF = {order: Object.keys(BLOCKS), collapsed: ['heat'], hidden: []};
+  let P = null, tlOpen = false, customizing = false, lastActive = null;
+  const ls = (k, v) => { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (_) { return null; } };
+  function prefs() {
+    if (P) return P;
+    try { P = JSON.parse(ls('nn_home_prefs') || 'null'); } catch (_) { P = null; }
+    return (P = norm(P));
+  }
+  function norm(p) {
+    p = Object.assign({}, DEF, p || {});
+    const ok = k => Object.prototype.hasOwnProperty.call(BLOCKS, k);
+    p.order = [...new Set((p.order || []).filter(ok).concat(DEF.order))];
+    p.collapsed = (p.collapsed || []).filter(ok); p.hidden = (p.hidden || []).filter(ok);
+    return p;
+  }
+  let saveT = null;
+  function savePrefs() {
+    ls('nn_home_prefs', JSON.stringify(P));
+    clearTimeout(saveT);
+    saveT = setTimeout(() => window.NN.post('/api/me/prefs', {home: P}).catch(() => { /* fica só neste navegador */ }), 600);
+  }
+  function heatBox() { let e = $('hxHeat'); if (!e) e = h('div', {class: 'hx-heatbox', id: 'hxHeat'}); return e; }
+
+  function liveKpis() {
+    const S = window.NN.S, o = S.overview || {}, k = (D && D.kpi) || {};
+    const set = (id, v, cls, sub) => {
+      const e = $(id); if (!e) return;
+      e.querySelector('.v b').textContent = v; e.querySelector('.v').className = 'v ' + (cls || '');
+      if (sub != null) e.querySelector('.s').textContent = sub;
+    };
+    const up = k.up_today;
+    set('h2kUp', up == null ? '--' : pct(up, 2), up == null ? '' : up >= 99.5 ? 'ok' : up >= 98 ? 'warn' : 'bad',
+      `7 dias ${pct(k.up_7d, 2)}% · 30 dias ${pct(k.up_30d, 2)}%`);
+    set('h2kLat', ms(o.avg_latency), '', o.avg_jitter != null ? `jitter ${ms(o.avg_jitter)} ms · média dos destinos` : 'média dos destinos');
+    const loss = num(o.avg_loss_pct), live = o.targets || {};
+    const losing = Object.keys(live).filter(n => (num(live[n].loss_pct) || 0) > 0);
+    set('h2kLoss', pct(loss), loss > 5 ? 'bad' : loss > 0 ? 'warn' : '',
+      losing.length ? (losing.length <= 2 ? losing.join(', ') : losing.length + ' destinos') + ' perdendo' : 'nenhum destino perdendo');
+    const n = (S.active || []).length;
+    set('h2kInc', String(n), n ? 'bad' : '', `${k.month_incidents == null ? '--' : k.month_incidents} no mês` +
+      (k.month_mttr_s ? ' · resolvidos em ' + dur(k.month_mttr_s) + ' (média)' : ''));
+  }
+  function k2(id, icon, label, unit, open) {
+    return h('button', {class: 'h2-kpi', id, type: 'button', onclick: () => openSheet(open)},
+      h('span', {class: 'l'}, ICON(icon), label), h('span', {class: 'v'}, h('b', {text: '--'}), h('small', {text: unit})), h('span', {class: 's'}));
+  }
+
+  function renderTop() {
+    const top = $('hxTop');
+    if (!top) return;
+    const St = D.story || {state: 'ok', headline: '', sub: '', day: ''};
+    const bad = St.state === 'bad' || St.state === 'warn';
+    clear(top);
+    // ---- 1. estado
+    const btn = h('button', {class: 'tbtn' + (bad ? ' primary' : ''), type: 'button', title: 'Gateway, internet, DNS, MikroTik e traceroute agora'}, ICON('search'), ' Diagnosticar agora');
+    btn.onclick = () => runDiag(btn);
+    const acts = h('div', {class: 'h2-acts'}, btn);
+    if (bad) acts.append(h('button', {class: 'tbtn', type: 'button', onclick: () => openSheet('topology', {view: 'mapa'})}, ICON('map'), ' Ver no mapa'),
+      h('button', {class: 'tbtn', type: 'button', onclick: () => openSheet('incidents')}, ICON('alert'), ' Incidentes'));
+    else acts.append(h('button', {class: 'tbtn', type: 'button', onclick: () => { tlOpen = !tlOpen; renderTop(); }}, ICON('clock'), tlOpen ? ' Recolher linha do tempo' : ' Linha do tempo'));
+    const head = String(St.headline || '').replace(/^Agora:\s*/, '');
+    const state = h('div', {class: 'h2-state'},
+      h('span', {class: 'h2-orb', trusted: ICO(St.state === 'bad' ? 'x' : St.state === 'warn' ? 'alert' : 'check')}),
+      h('div', {class: 'h2-txt'}, h('h2', {text: head || 'Carregando…'}), St.sub ? h('div', {class: 'h2-why', text: St.sub}) : null, acts));
+    if (diagBox) {
+      const d = diagBox, b = h('div', {class: 'st-diag'});
+      if (d.loading) b.append(h('div', {class: 'hint', text: 'Pingando gateway e internet, testando DNS, consultando o MikroTik…'}));
+      else if (d.error) b.append(h('div', {class: 'callout', text: d.error}));
+      else b.append(h('div', {class: 'st-dt'}, h('b', {text: d.title}), h('span', {class: 'conf', text: 'confiança ' + d.confidence + ' · ' + d.secs + ' s'}),
+        h('button', {class: 'st-x', type: 'button', title: 'Fechar', trusted: ICO('x'), onclick: () => { diagBox = null; render(); }})),
+      d.text ? h('p', {text: d.text}) : null, evList(d.evidence, d.tips));
+      state.lastChild.append(b);
+    }
+    const kp = h('div', {class: 'h2-kpis'},
+      k2('h2kUp', 'check', 'Disponível hoje', '%', 'sla'), k2('h2kLat', 'activity', 'Latência agora', 'ms', 'latency'),
+      k2('h2kLoss', 'loss', 'Perda agora', '%', 'latency'), k2('h2kInc', 'alert', 'Incidentes', 'agora', 'incidents'));
+    top.append(h('section', {class: 'h2-hero glass st-' + St.state}, state, kp));
+    liveKpis();
+    // ---- 2. linha do tempo
+    const tl = h('section', {class: 'h2-tl glass st-' + St.state});
+    if (bad || tlOpen) {
+      tl.append(h('div', {class: 'hx-lab'}, ICON('clock'), h('span', {text: 'O que aconteceu'}), h('span', {class: 'hx-r', text: St.day || ''}),
+        !bad ? h('button', {class: 'h2-x', type: 'button', title: 'Recolher', trusted: ICO('x'), onclick: () => { tlOpen = false; renderTop(); }}) : null));
+      const tmp = h('div');
+      try { renderStory(tmp); } catch (e) { console.error(e); }
+      // reaproveita a linha do tempo da narrativa (sem o cabeçalho, que já está no bloco de cima)
+      tmp.querySelectorAll('.st-head, .st-diag').forEach(x => x.remove());
+      tl.append(...tmp.childNodes);
+    } else {
+      tl.classList.add('calm');
+      tl.append(ICON('clock'), h('span', {class: 'h2-day', text: St.day || 'Nada aconteceu nas últimas 48 horas.'}),
+        h('button', {class: 'tbtn', type: 'button', onclick: () => { tlOpen = true; renderTop(); }}, 'Abrir linha do tempo'));
+    }
+    top.append(tl);
+    // ---- 3. título dos destinos (os cards vêm logo abaixo, do app.js)
+    top.append(h('div', {class: 'h2-bar'}, h('h3', {text: 'Destinos'}), h('span', {class: 'hint', text: 'com problema primeiro · agrupados como no mapa'}),
+      h('button', {class: 'tbtn', type: 'button', onclick: () => openSheet('config', {tab: 'destinos'})}, ICON('plus'), ' Adicionar')));
+  }
+
+  function renderDetails() {
     const root = $('hx');
-    if (!root || !D) return;
-    const keep = root.querySelector('.hx-cams');           // não recarrega as fotos a cada atualização
-    const keepPanel = keep && keep.closest('.hx-p');
+    const p = prefs();
+    const keep = root.querySelector('[data-blk="cams"]');           // não recarrega as fotos a cada atualização
     clear(root);
-    root.append(panel('hx-story', renderStory));
-    const k = h('div', {class: 'hx-kpis'}); renderKpis(k); root.append(k);
-    const row = h('div', {class: 'hx-row' + (D.net ? '' : ' one')});
-    row.append(panel('hx-avail', renderAvail));
-    if (D.net) row.append(panel('hx-net', renderNet));
-    root.append(row);
-    const row2 = h('div', {class: 'hx-row4'});
-    if (D.cams && D.cams.channels.length) row2.append(keepPanel || panel('hx-camp', renderCams));
-    if (D.agh) row2.append(panel('hx-agh', renderAgh));
-    row2.append(panel('hx-dns', renderDns));
-    row2.append(panel('hx-sys', renderSys));
-    const hasCam = !!row2.querySelector('.hx-cams');
-    row2.classList.toggle('cams', hasCam);
-    row2.style.setProperty('--cols', row2.children.length);
-    row2.style.setProperty('--rest', Math.max(1, row2.children.length - 1));
-    root.append(row2);
-    if (!keepPanel && row2.querySelector('.hx-cams')) refreshCams(true);   // painel novo: carrega as fotos
+    const bar = h('div', {class: 'h2-bar'}, h('h3', {text: 'Detalhes'}),
+      h('span', {class: 'hint', text: 'arraste ⋮⋮ para reordenar · clique no título para recolher'}),
+      h('button', {class: 'tbtn' + (customizing ? ' on' : ''), type: 'button', onclick: () => { customizing = !customizing; renderDetails(); }}, ICON('gear'), ' Personalizar'));
+    root.append(bar);
+    if (customizing) {
+      const box = h('div', {class: 'h2-custom glass'}, h('div', {class: 'hint', text: 'Blocos mostrados na página inicial:'}));
+      for (const id of p.order) {
+        const c = h('input', {type: 'checkbox'}); c.checked = !p.hidden.includes(id);
+        c.addEventListener('change', () => { p.hidden = c.checked ? p.hidden.filter(x => x !== id) : p.hidden.concat(id); savePrefs(); renderDetails(); });
+        box.append(h('label', {class: 'switch'}, c, BLOCKS[id].t));
+      }
+      box.append(h('button', {class: 'tbtn', type: 'button', onclick: () => { P = norm(null); savePrefs(); renderDetails(); }}, ICON('refresh'), ' Restaurar padrão'));
+      root.append(box);
+    }
+    const grid = h('div', {class: 'h2-blocks'});
+    for (const id of p.order) {
+      const B = BLOCKS[id];
+      if (p.hidden.includes(id) || (B.need && !B.need())) continue;
+      const cls = {cams: 'hx-camp', heat: 'hx-heatp'}[id] || 'hx-' + id;          // mesmas classes da página clássica
+      const el = (id === 'cams' && keep) ? keep : panel(cls, B.fn);
+      el.dataset.blk = id;
+      el.classList.toggle('span2', B.span === 2);
+      el.classList.toggle('h2-col', p.collapsed.includes(id));
+      wireBlock(el, id);
+      grid.append(el);
+    }
+    root.append(grid);
+    if (!keep && grid.querySelector('.hx-cams')) refreshCams(true);
     renderHeat();
-    const vl = $('verLine');
-    if (vl && D.system && D.system.version) vl.textContent = (window.APP_NAME || 'NetNOC') + ' · v' + D.system.version;
+  }
+  function wireBlock(el, id) {
+    const p = prefs();
+    const lb = el.querySelector(':scope > .hx-lab');
+    if (!lb || lb.dataset.wired) return;
+    lb.dataset.wired = '1';
+    lb.classList.add('h2-head');
+    lb.title = 'Clique para recolher/abrir';
+    lb.addEventListener('click', ev => {
+      if (ev.target.closest('a, button, input, select, .h2-drag')) return;
+      const col = !el.classList.contains('h2-col');
+      el.classList.toggle('h2-col', col);
+      p.collapsed = col ? p.collapsed.concat(id) : p.collapsed.filter(x => x !== id);
+      savePrefs();
+    });
+    const hd = h('span', {class: 'h2-drag', title: 'Arraste para reordenar', text: '⋮⋮', draggable: 'true'});
+    hd.addEventListener('dragstart', ev => { el.classList.add('dragging'); ev.dataTransfer.effectAllowed = 'move'; ev.dataTransfer.setData('text/plain', id); });
+    hd.addEventListener('dragend', () => {
+      el.classList.remove('dragging');
+      const g = el.parentElement;
+      if (g) p.order = [...g.children].map(x => x.dataset.blk).concat(p.order).filter((x, i, a) => x && a.indexOf(x) === i);
+      savePrefs();
+    });
+    lb.append(hd);
+    el.addEventListener('dragover', ev => {
+      const g = el.parentElement, drag = g && g.querySelector('.dragging');
+      if (!drag || drag === el) return;
+      ev.preventDefault();
+      const r = el.getBoundingClientRect();
+      const after = (ev.clientY - r.top) > r.height / 2 || (ev.clientX - r.left) > r.width * 0.66;
+      g.insertBefore(drag, after ? el.nextSibling : el);
+    });
+  }
+
+  function render() {
+    if (!D) return;
+    try { renderTop(); } catch (e) { window.NN.reportError('Página inicial (topo): ' + e.message, e); }
+    try { renderDetails(); } catch (e) { window.NN.reportError('Página inicial (detalhes): ' + e.message, e); }
   }
   async function load() {
-    try { D = await api('/api/home'); render(); } catch (_) { /* sessão expirada: app.js redireciona */ }
+    try { D = await api('/api/home'); } catch (_) { return; /* sessão expirada/rede: app.js trata */ }
+    try { render(); } catch (e) { NN.reportError('Página inicial: ' + e.message, e); }
   }
   function start() {
+    // arrumação salva no servidor (vale em qualquer aparelho); o localStorage só acelera a primeira pintura
+    api('/api/me/prefs').then(r => { if (r && r.home) { P = norm(r.home); ls('nn_home_prefs', JSON.stringify(P)); render(); } }).catch(() => {});
+    // números ao vivo (SSE) sem esperar os 30 s; incidente novo/resolvido recarrega a narrativa na hora
+    document.addEventListener('nn:snapshot', ev => {
+      if (!D) return;
+      liveKpis();
+      const sig = ((ev.detail && ev.detail.incidents) || []).map(i => i.id).join(',');
+      if (sig !== lastActive) { const first = lastActive === null; lastActive = sig; if (!first) load(); }
+    });
     load();
     setInterval(() => { if (!document.hidden) load(); }, 30000);
     document.addEventListener('visibilitychange', () => { if (!document.hidden) { load(); refreshCams(false); } });

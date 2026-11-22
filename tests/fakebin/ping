@@ -1,0 +1,8 @@
+#!/bin/bash
+host="${@: -1}"
+case "$host" in
+  *facebook*|192.168.88.249) exit 1;;
+  10.*|192.168.*) t=$(awk -v r=$RANDOM 'BEGIN{printf "%.2f", 0.5+r/32768*0.4}');;
+  *) t=$(awk -v r=$RANDOM 'BEGIN{printf "%.1f", 11+r/32768*3}');;
+esac
+echo "64 bytes from $host: icmp_seq=1 ttl=57 time=$t ms"

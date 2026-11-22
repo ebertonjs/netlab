@@ -9,50 +9,28 @@
   <link rel="icon" href="icon-192.png">
   <link rel="stylesheet" href="glass/fonts.css?v=3.8.0">
   <link rel="stylesheet" href="glass/glass.css?v=3.12.0">
-  <link rel="stylesheet" href="glass/skins/terminal.css?v=3.8.0">
-  <link rel="stylesheet" href="glass/skins/grafana.css?v=3.8.0">
-  <link rel="stylesheet" href="glass/skins/material.css?v=3.8.0">
-  <link rel="stylesheet" href="glass/skins/lagoa.css?v=3.7.0">
   <link rel="stylesheet" href="glass/skins/pro.css?v=3.8.0">
   <link rel="stylesheet" href="glass/dial.css?v=3.10.0">
   <script src="glass/skins.js?v=3.8.0"></script>
 </head>
-<body>
+<body class="home2">
   <div class="bg" aria-hidden="true"></div>
 
   <div class="shell" id="shell">
-    <!-- ===== coluna esquerda: relógio + visão da internet + incidentes ===== -->
+    <!-- ===== topo: data/rede + avisos e sessão ===== -->
     <header class="dateblock">
       <div class="date" id="dateLine">—</div>
       <div class="subdate" id="subLine">—</div>
     </header>
-
-    <aside class="side glass-dark" id="side">
-      <div class="clock" id="clock">--:--</div>
-      <div class="rule"></div>
-      <div class="now">
-        <div class="now-icon" id="netIcon"></div>
-        <div class="now-main">
-          <div class="now-val"><span id="netLat">--</span><sup>ms</sup></div>
-          <div class="now-sub" id="netSub">↑ -- ↓ --</div>
-        </div>
-      </div>
-      <div class="hours" id="hours"></div>
-      <div class="rule"></div>
-      <div class="agenda" id="agenda"></div>
-      <div class="hx-heatbox" id="hxHeat"></div>
-    </aside>
-
-    <!-- ===== chips de status ===== -->
-    <nav class="chips" id="chips" aria-label="Status"></nav>
 
     <div class="me" id="me">
       <button class="avatar" id="themeBtn" type="button" title="Alternar tema claro/escuro"></button>
       <button class="avatar" id="userBtn" type="button" title="Sessão"></button>
     </div>
 
-    <!-- ===== cards dos destinos + blocos de resumo ===== -->
+    <!-- ===== estado da rede, destinos e blocos de detalhes ===== -->
     <div class="homecol" id="homecol">
+      <section class="hx-top" id="hxTop" aria-label="Estado da rede"></section>
       <main class="grid" id="grid" aria-label="Destinos monitorados"></main>
       <section class="hx" id="hx" aria-label="Resumo da rede"></section>
     </div>
@@ -92,7 +70,18 @@
   <script src="glass/home.js?v=3.12.0"></script>
   <script src="glass/camplayer.js?v=3.8.0"></script>
   <script src="glass/topomap.js?v=3.8.0"></script>
-  <script src="glass/sheets.js?v=3.12.0"></script>
+  <script src="glass/telas/comum.js"></script>
+  <script src="glass/telas/latencia.js"></script>
+  <script src="glass/telas/destino.js"></script>
+  <script src="glass/telas/incidentes.js"></script>
+  <script src="glass/telas/dns.js"></script>
+  <script src="glass/telas/mikrotik.js"></script>
+  <script src="glass/telas/adguard.js"></script>
+  <script src="glass/telas/topologia.js"></script>
+  <script src="glass/telas/ferramentas.js"></script>
+  <script src="glass/telas/sla.js"></script>
+  <script src="glass/telas/cameras.js"></script>
+  <script src="glass/telas/config.js"></script>
   <script src="glass/dial.js?v=3.10.0"></script>
   <script src="glass/tv.js?v=3.10.0"></script>
 </body>

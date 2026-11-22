@@ -76,7 +76,7 @@
       }),
       every('dns', 30000, async () => { D.dns = await api('/api/dns'); }),
       every('lat24', 60000, async () => { D.lat24 = await api('/api/history/24h'); }),
-      every('speed', 120000, async () => { D.speed = await api('/api/speedtest/history?limit=8'); }),
+      every('speed', 120000, async () => { D.wan = await api('/api/wan/peak'); }),
       every('sla', 300000, async () => { D.sla = await api('/api/sla?month=' + month); }),
     ]);
   }
@@ -286,8 +286,12 @@
       const sig = window.NNMap.sig(T);
       if (sig === this.sig && Date.now() - (this.drawn || 0) < 60000) return;
       this.sig = sig; this.drawn = Date.now();
-      if (this.map) this.map.destroy();
-      this.map = window.NNMap.render(this.box, T, {tv: true});
+      if (this.map) { try { this.map.destroy(); } catch (_) { /* ok */ } this.map = null; }
+      try { this.map = window.NNMap.render(this.box, T, {tv: true}); } catch (e) {
+        console.error('[tv] mapa', e);
+        this.sig = null;      // tenta de novo na próxima atualização
+        clear(this.box).append(h('div', {class: 'tvg-empty', text: 'Mapa indisponível agora (' + e.message + ').'}));
+      }
     },
     stop() { if (this.map) { this.map.destroy(); this.map = null; } this.sig = null; },
   };
@@ -367,19 +371,20 @@
       if (!bars.children.length) bars.append(h('div', {class: 'tvg-sub', text: 'Nenhum servidor configurado.'}));
       Dn.append(bars);
 
-      // velocidade
-      const Sp = clear(this.speed), sl = D.speed || [];
-      Sp.append(lab('Velocidade', 'gauge'));
-      if (!sl.length) Sp.append(h('div', {class: 'tvg-empty', text: 'Nenhum teste ainda.'}));
+      // velocidade real: pico da porta WAN (v4.0, no lugar do speedtest)
+      const Sp = clear(this.speed), W = D.wan || {}, t = W.today;
+      Sp.append(lab('Pico na WAN', 'gauge'));
+      if (!t) Sp.append(h('div', {class: 'tvg-empty', text: 'Sem dados do MikroTik.'}));
       else {
-        const x = sl[0];
+        const mb = v => v != null ? String(Math.round(v / 1e6)) : '–';
         Sp.append(h('div', {style: {display: 'flex', gap: '1.6em', alignItems: 'baseline'}},
-          h('div', {class: 'tvg-big'}, x.download != null ? String(Math.round(x.download)) : '–', h('small', {text: '↓ Mbps'})),
-          h('div', {class: 'tvg-big', style: {fontSize: '2em'}}, x.upload != null ? String(Math.round(x.upload)) : '–', h('small', {text: '↑ Mbps'}))),
-        h('div', {class: 'tvg-sub', text: 'último teste ' + new Date(x.ts * 1000).toLocaleString('pt-BR', {day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'}) + ' · latência ' + ms(x.latency, 0) + ' ms'}));
-        const mx = Math.max(1, ...sl.map(r => r.download || 0));
+          h('div', {class: 'tvg-big'}, mb(t.rx_bps), h('small', {text: '↓ Mbps'})),
+          h('div', {class: 'tvg-big', style: {fontSize: '2em'}}, mb(t.tx_bps), h('small', {text: '↑ Mbps'}))),
+        h('div', {class: 'tvg-sub', text: 'hoje · porta ' + t.iface}));
+        const rows = [['Hoje', t], ['7 dias', W.d7], ['30 dias', W.d30]].filter(r => r[1]);
+        const mx = Math.max(1, ...rows.map(r => r[1].rx_bps || 0));
         const b = h('div', {class: 'tvg-bars', style: {marginTop: 'auto'}});
-        for (const r of sl.slice(0, 4)) b.append(bar(new Date(r.ts * 1000).toLocaleDateString('pt-BR', {day: '2-digit', month: '2-digit'}), (r.download != null ? Math.round(r.download) : '–') + ' Mbps', 100 * (r.download || 0) / mx, 'var(--blue)'));
+        for (const [l, r] of rows) b.append(bar(l, mb(r.rx_bps) + ' Mbps', 100 * (r.rx_bps || 0) / mx, 'var(--blue)'));
         Sp.append(b);
       }
     },
@@ -409,6 +414,7 @@
         const g = ctx.createLinearGradient(0, 0, 0, this.cv.parentElement.clientHeight || 300);
         g.addColorStop(0, col + '70'); g.addColorStop(1, col + '00');
         const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+        if (!window.Chart) { this.cv.replaceWith(h('div', {class: 'tvg-empty', text: 'Gráfico indisponível.'})); return; }
         chart = new Chart(this.cv, {type: 'line', data: {datasets: [{data: pts, borderColor: col, backgroundColor: g, fill: true, tension: .3,
           cubicInterpolationMode: 'monotone', pointRadius: 0, borderWidth: 2.5}]},
         options: {responsive: true, maintainAspectRatio: false, animation: false, parsing: false,
@@ -643,7 +649,13 @@
     if (chart) { try { chart.destroy(); } catch (_) { /* ok */ } chart = null; }
     if (scene && scene.stop) scene.stop();
     scene = SC[key];
-    const node = scene.build();
+    let node;
+    try { node = scene.build(); } catch (e) {
+      // uma cena quebrada não pode parar o rodízio da TV: mostra o aviso e segue para a próxima
+      console.error('[tv] cena', key, e);
+      node = h('div', {class: 'tv-fallback'}, h('div', {class: 'callout', text: 'Esta cena não pôde ser mostrada (' + (e && e.message || 'erro') + '). Seguindo o rodízio.'}));
+      scene = {update() {}, stop() {}};
+    }
     clear(el.stage).append(node);
     const meta = SCENES[key - 1];
     clear(el.scene).append(h('span', {trusted: ICO(meta[2])}), meta[1]);

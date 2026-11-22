@@ -6,8 +6,6 @@ from netnoc.integracoes import dvr
 from netnoc.coleta import monitor
 from netnoc.alertas import notifier
 from netnoc.nucleo import security
-from netnoc.coleta import snmp
-from netnoc.integracoes import zabbix
 from netnoc.bot import aibot
 
 FORMAT = "netnoc-backup"
@@ -18,11 +16,12 @@ SECRET_MAP = {
     "telegram": (("bot_token",), ("chat_id",)),
     "mikrotik": (("password",), ("host", "port", "username", "use_https")),
     "agh": (("password",), ("host", "port", "username", "use_https")),
-    "zabbix": (("token",), ("url",)),
     "dvr": (("password",), ("host", "http_port", "rtsp_port", "username")),
     "ai_bot": (("gemini_key", "groq_key"), ()),
 }
-PLAIN = ("targets", "dns_servers", "intervals", "app_name", "maintenance", "ui_default", "speedtest_auto")
+PLAIN = ("targets", "dns_servers", "intervals", "app_name", "maintenance", "ui_default")
+# backups de versões antigas ainda podem trazer estas chaves: são ignoradas (SNMP, Zabbix, speedtest saíram na v4.0)
+IGNORED = ("zabbix", "snmp_devices", "speedtest_auto")
 
 
 def export_cfg():
@@ -32,7 +31,7 @@ def export_cfg():
         if raw is not None:
             out[k] = raw if k == "app_name" else json.loads(raw)
     cfgs = {"telegram": monitor.get_telegram(), "mikrotik": monitor.get_mikrotik(),
-            "agh": monitor.get_agh(), "zabbix": zabbix.get_cfg(), "dvr": dvr.get_cfg(), "ai_bot": aibot.get_cfg()}
+            "agh": monitor.get_agh(), "dvr": dvr.get_cfg(), "ai_bot": aibot.get_cfg()}
     for k, (secrets_, _) in SECRET_MAP.items():
         c = dict(cfgs[k])
         for f in secrets_:
@@ -43,11 +42,6 @@ def export_cfg():
     n["webhook"]["secret"] = ""
     n["email"]["password"] = ""
     out["notify"] = n
-    devs = snmp.get_devices()
-    for d in devs:
-        for f in snmp.SECRET_FIELDS:
-            d[f] = ""
-    out["snmp_devices"] = devs
     return {"format": FORMAT, "version": VERSION, "exported_at": time.time(), "settings": out}
 
 
@@ -70,6 +64,8 @@ def _validate(data):
         if not isinstance(ts, list) or len(ts) > 1000:
             raise BackupError("targets: formato inválido")
         names = set()
+        # destino de agente remoto (multi-site, removido na v4.0) fica de fora
+        ts = [t for t in ts if not (isinstance(t, dict) and t.get("type") == "agent")]
         for t in ts:
             if not isinstance(t, dict):
                 raise BackupError("targets: item inválido")
@@ -81,7 +77,7 @@ def _validate(data):
                 raise BackupError(f"targets: host inválido em {n}")
             if t.get("type") == "tcp" and not security.valid_port(t.get("port")):
                 raise BackupError(f"targets: porta inválida em {n}")
-            if t.get("type", "icmp") not in ("icmp", "tcp", "http", "agent"):
+            if t.get("type", "icmp") not in ("icmp", "tcp", "http"):
                 raise BackupError(f"targets: tipo inválido em {n}")
             iv = t.get("interval")
             if iv is not None and (not isinstance(iv, int) or not 2 <= iv <= 3600):
@@ -89,9 +85,7 @@ def _validate(data):
             st = t.get("expect_status")
             if st is not None and (not isinstance(st, int) or not 100 <= st <= 599):
                 raise BackupError(f"targets: status HTTP inválido em {n}")
-            sites_ = t.get("sites") or []
-            if not isinstance(sites_, list) or any(not security.valid_name(x, 40) or "@" in x for x in sites_):
-                raise BackupError(f"targets: sites inválidos em {n}")
+            t.pop("sites", None)
             g = t.get("group")
             if g is not None and (not isinstance(g, str) or not security.valid_name(g, 30)):
                 raise BackupError(f"targets: grupo inválido em {n}")
@@ -100,7 +94,7 @@ def _validate(data):
             names.add(n)
         for t in ts:
             if t.get("parent") and t["parent"] not in names:
-                raise BackupError(f"targets: pai inexistente em {t['name']}")
+                t.pop("parent")          # o pai era um destino que saiu (ex.: agente): vira destino de topo
         out["targets"] = ts
     if "dns_servers" in s:
         ds = s["dns_servers"]
@@ -121,19 +115,12 @@ def _validate(data):
         out["intervals"] = clean
     if "ui_default" in s:
         u = s["ui_default"]
-        skins = {"pro": ("dark", "light"), "glass": ("dark", "light"), "terminal": ("verde", "ambar", "ciano"),
-                 "grafana": ("dark", "light"), "material": ("light", "dark"), "lagoa": ("lagoa", "noite")}
         import re as _re
-        if not isinstance(u, dict) or u.get("skin") not in skins or u.get("mode") not in skins[u["skin"]] or \
-                not _re.fullmatch(r"#[0-9a-fA-F]{6}", str(u.get("accent", "#6750a4"))):
+        if not isinstance(u, dict) or not _re.fullmatch(r"#[0-9a-fA-F]{6}", str(u.get("accent", "#6750a4"))):
             raise BackupError("ui_default: tema inválido")
+        # v4.0: só o tema Pro; backups com outro tema viram Pro (escuro, salvo se era claro)
+        u = {"skin": "pro", "mode": "light" if u.get("mode") in ("light",) else "dark", "accent": u.get("accent", "#6750a4")}
         out["ui_default"] = {"skin": u["skin"], "mode": u["mode"], "accent": str(u.get("accent", "#6750a4")).lower()}
-    if "speedtest_auto" in s:
-        sa = s["speedtest_auto"]
-        import re as _re2
-        if not isinstance(sa, dict) or not _re2.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", str(sa.get("time", ""))):
-            raise BackupError("speedtest_auto: horário inválido")
-        out["speedtest_auto"] = {"enabled": bool(sa.get("enabled", True)), "time": sa["time"]}
     if "app_name" in s:
         if not isinstance(s["app_name"], str) or not security.valid_name(s["app_name"], 40):
             raise BackupError("app_name inválido")
@@ -150,7 +137,7 @@ def _validate(data):
             m.setdefault("id", str(int(m["start"])))
             m["targets"] = [str(x) for x in (m.get("targets") or [])]
         out["maintenance"] = ms
-    for k in ("telegram", "mikrotik", "agh", "zabbix", "dvr", "ai_bot"):
+    for k in ("telegram", "mikrotik", "agh", "dvr", "ai_bot"):
         if k in s:
             c = s[k]
             if not isinstance(c, dict):
@@ -161,8 +148,6 @@ def _validate(data):
                 raise BackupError("ai_bot: modelo inválido")
             if k in ("mikrotik", "agh", "dvr") and c.get("host") and not security.valid_host(c["host"]):
                 raise BackupError(f"{k}: host inválido")
-            if k == "zabbix" and c.get("url") and not security.valid_url(c["url"]):
-                raise BackupError("zabbix: url inválida")
             out[k] = c
     if "notify" in s:
         n = s["notify"]
@@ -179,16 +164,6 @@ def _validate(data):
         if e.get("port") not in (None, "") and not security.valid_port(e.get("port")):
             raise BackupError("notify: porta SMTP inválida")
         out["notify"] = n
-    if "snmp_devices" in s:
-        sd = s["snmp_devices"]
-        if not isinstance(sd, list):
-            raise BackupError("snmp_devices: formato inválido")
-        for d in sd:
-            try:
-                snmp.validate_device(d, False)
-            except Exception as e:
-                raise BackupError(f"snmp_devices: {e}")
-        out["snmp_devices"] = sd
     return out
 
 
@@ -196,13 +171,13 @@ def import_cfg(data):
     norm = _validate(data)           # 400 antes de tocar no banco
     applied = []
     cur = {"telegram": monitor.get_telegram(), "mikrotik": monitor.get_mikrotik(),
-           "agh": monitor.get_agh(), "zabbix": zabbix.get_cfg(), "dvr": dvr.get_cfg(), "ai_bot": aibot.get_cfg()}
+           "agh": monitor.get_agh(), "dvr": dvr.get_cfg(), "ai_bot": aibot.get_cfg()}
     for k in PLAIN:
         if k in norm:
             db.set_setting(k, norm[k] if k == "app_name" else json.dumps(norm[k]))
             applied.append(k)
     monitor._invalidate_targets()
-    for k in ("telegram", "mikrotik", "agh", "zabbix", "dvr", "ai_bot"):
+    for k in ("telegram", "mikrotik", "agh", "dvr", "ai_bot"):
         if k in norm:
             new = dict(cur[k])
             new.update(norm[k])
@@ -226,18 +201,4 @@ def import_cfg(data):
                 stored[ch][f] = security.encrypt(stored[ch].get(f) or "")
         db.set_setting("notify", json.dumps(stored))
         applied.append("notify")
-    if "snmp_devices" in norm:
-        old = {d["name"]: d for d in snmp.get_devices()}
-        for d in norm["snmp_devices"]:
-            o = old.get(d["name"], {})
-            same = all(str(d.get(g, "")) == str(o.get(g, "")) for g in ("host", "port", "version", "user"))
-            for f in snmp.SECRET_FIELDS:
-                d[f] = o.get(f, "") if same else ""
-        # grava sem a validação de community (segredos podem estar vazios)
-        for d in norm["snmp_devices"]:
-            for f in snmp.SECRET_FIELDS:
-                d[f] = security.encrypt(d.get(f) or "")
-            d.setdefault("poll_seconds", 60)
-        db.set_setting("snmp_devices", json.dumps(norm["snmp_devices"]))
-        applied.append("snmp_devices")
     return applied

@@ -38,6 +38,8 @@ pub struct Integration {
     pub port: u16,
     pub use_https: bool,
     pub verify_ssl: bool,
+    /// v4.1: impressão digital SHA-256 fixada (vazio = usa verify_ssl)
+    pub cert_sha256: String,
     pub username: String,
     pub password: String,
     pub interval_s: u64,
@@ -141,6 +143,7 @@ fn integration(raw: &Option<String>, def_port: u16, def_https: bool, def_verify:
         port: num(o.get("port")).map(|p| p as u16).filter(|p| *p > 0).unwrap_or(def_port),
         use_https: boolean(o.get("use_https"), def_https),
         verify_ssl: boolean(o.get("verify_ssl"), def_verify),
+        cert_sha256: text(o.get("cert_sha256")),
         username: text(o.get("username")),
         password: sec.decrypt(&text(o.get("password"))),
         interval_s: num(o.get("sync_interval_seconds")).map(|v| v as u64).unwrap_or(60).max(15),

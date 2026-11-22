@@ -1,5 +1,92 @@
 # Histórico de versões
 
+## v4.4 — código mais fácil de manter
+Nada muda na tela nem no uso; é a arrumação que deixa as próximas versões mais seguras.
+- **FastAPI 0.135 e Starlette 1.x** (antes 0.111 e 0.37). O pydantic fica como está: no Raspberry Pi 3 a versão nova dependeria de um pacote compilado em Rust que pode não existir pronto para o Pi.
+- **`atualizar.sh` volta as dependências também**: guarda a lista do `pip freeze` antes de instalar e, se a atualização falhar, reinstala as versões de antes.
+- **`monitor.py` (1.500 linhas) em 10 módulos** por assunto, **`aibot.py` em 5** e **`sheets.js` em um arquivo por tela** (`static/glass/telas/`). `monitor` e `aibot` continuam existindo como fachada.
+- **Migrações do banco numeradas** (`PRAGMA user_version` em cada arquivo): rodam só as pendentes, cada uma na sua transação; `manage.py migracoes` mostra a versão.
+- **Testes novos**: o NetNOC sobe de verdade e nenhuma rota dá erro 5xx (`partida`); um Chromium abre todas as telas e falha em qualquer erro de JavaScript (`test_navegador.py`, roda no CI); migrações.
+
+## v4.3 — medição e dados
+- **Medir agora**: a velocidade real da internet lida no MikroTik a cada segundo (30 s a 2 min) enquanto você roda um speedtest no celular ou no PC. Mostra o pico e a média dos 3 melhores segundos, comparando com o plano contratado (novo campo na tela do MikroTik). Na tela do MikroTik, pelo Telegram (`/medir`) ou pedindo à IA ("testa a velocidade"). Usa o `monitor-traffic` do RouterOS; se ele não estiver disponível pela REST, usa os contadores. Não precisa de device-mode.
+- **Syslog do MikroTik**: o roteador manda o log dele para o NetNOC (UDP 5514, só aceita o IP do MikroTik). Cada queda do PPPoE vira um evento com o motivo traduzido ("a operadora parou de responder", "falha de autenticação"…), o diagnóstico de queda da operadora cita a linha do log, e há uma tela de log com filtro e busca. Telegram: `/log`, `/log pppoe`, `/log admin`. Comandos do RouterOS prontos em Configurações → Integrações.
+- **Tráfego das portas em médias de 5 min**: o bruto fica 2 dias (`iface_raw_retention_days` no config.json) e o resto vira média e pico de 5 min. A tabela que passava de 1 milhão de linhas em 30 dias fica com ~3% disso. Gráficos de semana e o pico de 7/30 dias leem o agregado; o pico não se perde. A primeira limpeza roda em lotes, sem travar o Pi.
+- "PPOE OPERADORA" e nomes parecidos agora são reconhecidos como a porta da internet.
+
+## v4.2 — rede de segurança
+- **Backup diário no Telegram**: `.tar.gz` com a configuração, usuários e senhas cifradas, no horário escolhido (Configurações → Geral). Histórico opcional. `/backup` manda na hora; `/saude` mostra o estado. A chave `netnoc.key` nunca vai junto.
+- **Restaurar pelo terminal**: `manage.py restaurar arquivo.tar.gz --yes` guarda os arquivos atuais e avisa se a chave não abre as senhas do backup. `manage.py backup` gera o arquivo na pasta.
+- **`/healthz` de verdade**: responde 503 quando o banco não responde ou um laço de coleta parou (antes, sempre 200).
+- **Watchdog** (`./install.sh --watchdog`): timer do systemd que reinicia o NetNOC depois de 3 falhas seguidas do `/healthz`. Cobre o caso "travado mas não caiu", que o `Restart=always` não pega.
+- **Vigia externo**: a cada minuto o NetNOC avisa uma URL do healthchecks.io (ou compatível); se o Pi parar, o serviço avisa você. A URL fica cifrada.
+- **MikroTik por HTTPS com certificado fixado**: botão "Ler certificado" na tela do MikroTik, comandos do RouterOS prontos (certificado próprio, `www-ssl` só para o Pi, usuário com o mínimo de permissões). O NetNOC e o coletor Rust (4.1.0) só aceitam aquele certificado; se mudar, param e avisam.
+- **`atualizar.sh`**: aplica o zip de atualização, apaga os arquivos que saíram (`REMOVER.txt`), confere o `/healthz` e volta sozinho para a versão anterior se falhar. `--desfazer` volta a última.
+- **Testes no repositório** (`tests/`, `pytest -q`) e **CI a cada push** (Python 3.11 e 3.13, sintaxe dos `.js`, `cargo clippy` e `cargo test`).
+- Volta automática de porta: se o agendador do MikroTik recusar por permissão (usuário restrito), o NetNOC agenda a volta ele mesmo, como já fazia com o device-mode.
+
+## v4.1 — pedir em português: "reinicia tudo", "desliga o PPPoE", "manda as câmeras"
+- **Fotos das câmeras na hora** pelo Telegram: `/cameras` (todas, num álbum) ou `/cameras portão`; com IA, "me manda a foto da garagem".
+- **Desligar e ligar portas do MikroTik** (`/desligar`, `/religar`, `/portas`; com IA, "desabilita a porta do roteador"). A porta é achada pelo nome ou pelo **comentário** dela no RouterOS. "pppoe" desliga a conexão de internet.
+  - **Volta automática agendada no próprio MikroTik** (scheduler do RouterOS, padrão 5 min, ajustável): religa mesmo se o Pi ficar sem internet. A internet nunca fica desligada sem ela. Religar antes cancela o agendamento.
+  - Nunca desliga a porta em que o servidor do NetNOC está ligado (descoberta pela tabela ARP/bridge) nem a bridge.
+- **Reinícios** (`/reiniciar mikrotik | dvr | servidor | netnoc | tudo`; com IA, "reinicia tudo"): uma confirmação só, na ordem segura (DVR → NetNOC → MikroTik → servidor por último). O bot avisa quando o MikroTik volta (com o estado do PPPoE) e quando o servidor/NetNOC sobe de novo. O que entra no "tudo" é escolhido nas configurações (padrão: MikroTik e DVR).
+- Servidor e NetNOC precisam de uma permissão única no Pi: `./install.sh --permitir-reinicio` (só `systemctl reboot` e `systemctl restart netnoc`; desfaz com `--remover-reinicio`).
+- Tudo continua com os botões **Sim / Cancelar**, auditado, e com chaves próprias em Configurações → Alertas → Bot e IA ("Permitir desligar e ligar portas", "Permitir reinícios").
+
+## v4.0 — enxuto: só o que se usa, bem feito
+O NetNOC foi reformulado para o que um NOC doméstico/pequeno usa de verdade. Menos código para manter, menos coisa rodando no Pi e uma interface só.
+
+**O que saiu**
+- **Interface clássica** (`/classic`, ≈6.000 linhas de HTML/JS/CSS). As configurações que só existiam nela foram para a interface: **outros canais de alerta** (Discord, webhook assinado, e-mail) em Alertas, **usuários** e **token do Prometheus** em Segurança, **backup/restauração** em Geral. `/classic` agora abre a interface.
+- **Temas** Glass, NOC Terminal, Grafana/Zabbix, Material You e Lagoa. Fica o **Pro**, com modo escuro, claro ou **automático** (escuro das 18h às 7h, troca sozinho). Quem usava outro tema passa para o Pro mantendo claro/escuro.
+- **Página inicial clássica** (coluna com relógio, chips de status): a página nova é a única.
+- **SNMP, Zabbix e multi-site** (agentes remotos, pasta `agente/`).
+- **Speedtest** (manual e automático): no Raspberry Pi 3 a placa de rede vai até 100 Mbps (no 3 B+, ~300), então o teste media o Pi, não a internet, e ainda gastava banda todo dia.
+- Rotas da API que nada chamava, notas de atualização antigas em `docs/` e imagens sem uso.
+
+**O que entrou no lugar**
+- **Velocidade real da internet**: o maior download/upload que passou pela **porta WAN do MikroTik** hoje, em 7 e em 30 dias — na página inicial (bloco do MikroTik), em Ferramentas, na cena 3 do Modo TV, no diário e no bot (`banda_wan`). A porta é descoberta sozinha (PPPoE primeiro, ou nome/comentário de WAN) ou escolhida em Configurações → Integrações → MikroTik → **Porta da internet**.
+- **Internet saturada** no diagnóstico passa a comparar o tráfego atual com o maior dos últimos 30 dias.
+
+**Mais leve**
+- Interfaces do MikroTik (a maior tabela do histórico): porta parada ou desligada só é gravada quando muda de estado ou a cada 10 min, no Python e no coletor Rust (4.0.0). Na primeira hora após a atualização, as linhas antigas dessas portas e os pings de agentes são apagados em lotes.
+- Coletores sem nada configurado (MikroTik/AdGuard desligados, certificados sem destino HTTPS, câmeras sem DVR) saem da lista de saúde e nunca viram aviso de "coleta com falha".
+- Tela de login sem depender do CSS antigo.
+
+**Atualização (automática na primeira subida)**
+- A migração apaga do banco as tabelas e configurações do que saiu e tira os destinos do tipo agente; o resto fica igual. Backups da v3 restauram normalmente (o que saiu é ignorado).
+- O coletor Rust 4.0.0 sai pela release do GitHub como antes; o 3.13 continua funcionando com a v4.0.
+
+**Correções**
+- Gráficos e mini-gráficos davam erro quando um destino não tinha jitter registrado.
+
+## v3.14 — segurança em repouso, auditoria completa e interface que não quebra
+**Segredos (`netnoc/nucleo/cofre.py`)**
+- Inventário de **todas** as senhas e tokens salvos (Telegram, MikroTik, AdGuard, Gemini/Groq, Zabbix, câmeras, Discord/webhook/e-mail, SNMP e a assinatura das sessões), com o estado de cada um — cifrado, vazio ou em texto puro — sem nunca mostrar o valor. Em Configurações → **Segurança** e em `python manage.py secrets`.
+- Na partida, o NetNOC **cifra o que tiver ficado em texto puro** (bancos antigos, restauração manual) e **corrige a permissão do `netnoc.key`** para 0600. A chave que assina os cookies de sessão também passou a ficar cifrada no banco.
+- **Troca da chave**: `python manage.py rotate-key --yes` (com o NetNOC e o coletor parados) gera uma chave nova e recifra tudo numa transação só; se qualquer valor não decifrar, nada muda. A chave anterior fica em `netnoc.key.<data>.bak` (0600).
+
+**Auditoria**
+- Toda alteração pela API (POST/PUT/PATCH/DELETE) entra no registro com usuário, IP, caminho e resultado — inclusive as que ainda não tinham registro próprio, sem duplicar as que já tinham. **Tentativas negadas** (403, ex.: visualizador tentando apagar um usuário), erros 500, saídas (`logout`), entradas e senhas erradas.
+- Tela nova em Configurações → **Segurança**: filtros por usuário, tipo (entradas/saídas, negado/falhas, alterações), período e busca. Na linha de comando: `python manage.py audit 50`.
+
+**Página inicial nova**
+- Em cima, **o estado da rede e a causa** ("Facebook fora do ar há 7 min · Causa provável: DNS fora", com Diagnosticar, Ver no mapa e Incidentes) e **4 números**: disponível hoje, latência e perda agora (ao vivo) e incidentes. Substituem os chips, a coluna do relógio e a fileira de indicadores; o problema aparece uma vez só.
+- **Linha do tempo** aberta só quando há problema; com tudo bem vira uma linha ("Últimas 24 h: …") com "Abrir linha do tempo".
+- **Destinos** agrupados em Internet e Rede local, **com problema primeiro**.
+- **Detalhes em blocos** (disponibilidade, MikroTik, DNS, AdGuard, servidor, câmeras, mapa de incidentes): arraste ⋮⋮ para reordenar, clique no título para recolher, "Personalizar" para esconder ou restaurar o padrão. A arrumação fica **salva por usuário no servidor**, igual em qualquer aparelho (o perfil visualizador também pode arrumar a dele).
+- Falhas da própria coleta (AdGuard, MikroTik…) viram um aviso discreto no topo.
+- Funciona nos 6 temas e no celular. Quem preferir a antiga: Configurações → Aparência → Página inicial → **Clássica**.
+
+**Interface**
+- Medido com o navegador por 4 a 6 min (Modo TV girando as cenas, página inicial ao vivo e as telas abrindo/fechando 120 vezes): memória, elementos e ouvintes **estáveis**, todos os gráficos destruídos ao fechar. Sem vazamento.
+- Rede de segurança contra erros: um bloco que falha (gráfico, mapa, indicador, cena da TV) vira um aviso **no lugar dele** e o resto continua. O rodízio da TV não para numa cena quebrada (interface nova e clássica). Erros soltos vão para o console e, no máximo a cada 30 s, para um aviso na tela.
+- **Enlaces lentos (rádio, satélite, 4G)**: as respostas de texto saem comprimidas (gzip, cerca de 70% menores; arquivos comprimidos uma vez e guardados) e cada arquivo da página leva `?v=<impressão do conteúdo>` gerado sozinho, o que permite ao navegador guardá-lo por um ano e só baixar de novo o que mudou. O app instalado (PWA) abre esses arquivos direto do cache. O tempo real (SSE) e o vídeo ficam fora da compressão.
+
+**Banco**
+- Índices novos para o DNS, os agregados de 5 min e 1 h, as interfaces do MikroTik e a auditoria; `PRAGMA optimize` na partida e na limpeza diária; caches curtos nas consultas mais pesadas (barras de disponibilidade, mini-gráficos, SLA, narrativa). Num banco grande (600 mil pings, 1,4 milhão de leituras do MikroTik) as telas que levavam 50–95 ms passaram para 2–15 ms; MikroTik → interfaces de ~80 ms para 3–6 ms.
+
 ## v3.13 — base mais robusta (coletor e API)
 **Coletor em Rust (`collector/`)**
 - **Backoff exponencial** no MikroTik e no AdGuard: quando o equipamento não responde, as tentativas se espaçam (intervalo × 2, × 4… até `retry.max_backoff_secs`, padrão 600 s, com ±10% de variação) e voltam ao normal no primeiro sucesso. O evento de falha é gravado uma vez por sequência (antes: um por ciclo) e um "restabelecida" na volta; o log só repete em patamares (1ª, 2ª, 4ª, 8ª… falha).

@@ -12,6 +12,7 @@ Transforma medições em respostas: **por que** caiu, **o que** aconteceu, **com
 **Usa:** núcleo, coleta, bot (envio do diário). **Usado por:** web, bot.
 
 ## Mudanças
+- **v4.0** — "internet saturada" compara o download atual da WAN com o maior dos últimos 30 dias (antes, com o último speedtest); o diário traz o pico da WAN no lugar do speedtest; tipos de incidente de SNMP e agente saem da narrativa.
 - **v3.12** — pasta própria. `timemachine.py` novo. Corrigido o endereço da consulta ao MikroTik no diagnóstico (antes ele dava o roteador como fora do ar e as evidências de WAN/PPPoE não apareciam).
 - **v3.11** — `diagnose.py` e `story.py` novos: cerca de 20 causas reconhecidas (operadora/PPPoE/ONU/instabilidade, falha local, reinício do MikroTik, energia, aparelho, equipamento pai, parte da rede, serviço externo, DNS, perda interna, banda saturada), diário, rótulos curtos por causa nos resumos.
 - **v2.x** — relatório de SLA e CSV.
@@ -21,6 +22,6 @@ Transforma medições em respostas: **por que** caiu, **o que** aconteceu, **com
 - Os diagnósticos guardam as evidências: a linha do tempo, o diário, o bot e o mapa no passado mostram a mesma causa.
 
 ## Próximas melhorias
-- Fase 2: **dossiê da operadora** em PDF (quedas, durações, causa, speedtest × plano) e **notas por uso** (chamada de vídeo, jogo, streaming).
+- Fase 2: **dossiê da operadora** em PDF (quedas, durações, causa, pico da WAN × plano) e **notas por uso** (chamada de vídeo, jogo, streaming).
 - Fase 3: **normal por hora da semana** e tendência ("a operadora piora 2 ms por semana").
 - Aprender com o usuário: marcar um diagnóstico como errado para ajustar as regras.

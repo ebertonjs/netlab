@@ -7,21 +7,29 @@ _tlock = threading.Lock()
 
 
 def ttl_cache(seconds):
+    """Guarda o resultado por `seconds`. Preserva a assinatura (funciona como rota do FastAPI, que
+    chama com argumentos nomeados) e ignora o cache se algum argumento não puder ser chave (ex.: lista)."""
+    import functools
+
     def deco(fn):
-        def wrapper(*a):
-            k = (fn.__name__, a)
+        @functools.wraps(fn)
+        def wrapper(*a, **kw):
+            try:
+                k = (fn.__module__, fn.__name__, a, tuple(sorted(kw.items())))
+                hash(k)
+            except TypeError:
+                return fn(*a, **kw)
             now = time.time()
             with _tlock:
                 hit = _ttl.get(k)
                 if hit and hit[0] > now:
                     return hit[1]
-            val = fn(*a)
+            val = fn(*a, **kw)
             with _tlock:
                 if len(_ttl) > 500:
                     _ttl.clear()
                 _ttl[k] = (now + seconds, val)
             return val
-        wrapper.__name__ = fn.__name__
         return wrapper
     return deco
 
@@ -68,6 +76,18 @@ def run_rollups(now=None):
         stop = min(start + 24 * 3600, end1)
         db.rollup_chunk("pings_5m", "pings_1h", 3600, start, stop)
         db.set_meta("rollup1_end", stop)
+        start = stop
+    # v4.3: tráfego das portas do MikroTik em 5 min
+    cur_i = _meta_f("iface5_end")
+    if cur_i is None:
+        r = db.query_w("SELECT MIN(ts) m FROM mikrotik_iface")
+        cur_i = (int(r[0]["m"] // 300) * 300) if r and r[0]["m"] else end5
+    start, chunks = cur_i, 0
+    while start < end5 and chunks < 28:          # backfill de no máx. 7 dias por rodada (Pi 3 não trava o laço)
+        chunks += 1
+        stop = min(start + 6 * 3600, end5)
+        db.rollup_iface_chunk(start, stop)
+        db.set_meta("iface5_end", stop)
         start = stop
     cache_clear()
 
@@ -162,7 +182,7 @@ def series(seconds, targets=None):
             ok = r["ok"] or 0
             out.setdefault(r["target"], []).append({
                 "ts": r["b"], "latency": (r["ls"] / ok) if ok else None,
-                "jitter": (r["js"] / r["n"]) if r["n"] else 0,
+                "jitter": ((r["js"] or 0) / r["n"]) if r["n"] else 0,
                 "loss_pct": 100 * (1 - ok / r["n"]), "max": r["lm"] if ok else None})
         return out
     sql, params = _union(since, B, targets)

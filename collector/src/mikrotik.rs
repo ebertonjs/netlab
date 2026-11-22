@@ -65,8 +65,16 @@ fn opt_str(v: Option<&Value>) -> Option<String> {
 pub struct Mt {
     secure: reqwest::Client,
     insecure: reqwest::Client,
+    /// cliente com certificado fixado, recriado quando a impressão digital muda
+    pinned: Option<(String, reqwest::Client)>,
+    timeout: Duration,
     prev: HashMap<String, (i64, i64, f64)>,
+    /// (running, disabled, ts) da última linha gravada de cada porta
+    stored: HashMap<String, (bool, bool, f64)>,
 }
+
+/// Porta desligada/sem cabo: grava quando muda de estado ou a cada 10 min (v4.0). Porta em uso: sempre.
+pub const IDLE_STORE_SECS: f64 = 600.0;
 
 impl Mt {
     pub fn new(timeout: Duration) -> Self {
@@ -79,16 +87,28 @@ impl Mt {
                 .build()
                 .expect("cliente HTTP")
         };
-        Self { secure: mk(false), insecure: mk(true), prev: HashMap::new() }
+        Self { secure: mk(false), insecure: mk(true), pinned: None, timeout, prev: HashMap::new(), stored: HashMap::new() }
     }
 
     /// Esquece os contadores (ex.: troca de roteador): a próxima leitura não calcula bps.
     pub fn reset(&mut self) {
         self.prev.clear();
+        self.stored.clear();
     }
 
-    async fn get(&self, cfg: &Integration, path: &str) -> Result<Value, String> {
-        let client = if cfg.verify_ssl { &self.secure } else { &self.insecure };
+    fn client(&mut self, cfg: &Integration) -> Result<reqwest::Client, String> {
+        if cfg.use_https && !cfg.cert_sha256.is_empty() {
+            let fp = crate::tlspin::norm(&cfg.cert_sha256).ok_or("impressão digital do certificado inválida")?;
+            if self.pinned.as_ref().map(|(f, _)| f != &fp).unwrap_or(true) {
+                self.pinned = Some((fp.clone(), crate::tlspin::client(&fp, self.timeout)?));
+            }
+            return Ok(self.pinned.as_ref().unwrap().1.clone());
+        }
+        Ok(if cfg.verify_ssl { self.secure.clone() } else { self.insecure.clone() })
+    }
+
+    async fn get(&mut self, cfg: &Integration, path: &str) -> Result<Value, String> {
+        let client = self.client(cfg)?;
         let r = client
             .get(format!("{}/rest/{path}", cfg.base()))
             .basic_auth(&cfg.username, Some(&cfg.password))
@@ -144,16 +164,18 @@ impl Mt {
             }
             self.prev.insert(name.clone(), (rx, tx, ts));
             comments.insert(name.clone(), Value::String(clean_name(it.get("comment").and_then(Value::as_str).unwrap_or(""), 40)));
-            recs.push(Rec::MtIface {
-                ts,
-                name,
-                running: truthy(it.get("running")),
-                disabled: truthy(it.get("disabled")),
-                rx_bytes: rx,
-                tx_bytes: tx,
-                rx_bps,
-                tx_bps,
-            });
+            let (running, disabled) = (truthy(it.get("running")), truthy(it.get("disabled")));
+            // porta em uso entra sempre; parada só na mudança de estado ou a cada IDLE_STORE_SECS
+            let keep = (running && !disabled)
+                || match self.stored.get(&name) {
+                    Some(&(r, d, t)) => (r, d) != (running, disabled) || ts - t >= IDLE_STORE_SECS,
+                    None => true,
+                };
+            if !keep {
+                continue;
+            }
+            self.stored.insert(name.clone(), (running, disabled, ts));
+            recs.push(Rec::MtIface { ts, name, running, disabled, rx_bytes: rx, tx_bytes: tx, rx_bps, tx_bps });
         }
         // comentário de cada porta (o Python mostra na página inicial)
         recs.push(Rec::Meta { key: "mt_comments".into(), value: Value::Object(comments).to_string(), ts });

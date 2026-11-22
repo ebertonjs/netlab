@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="pt-BR" data-theme="dark-blue">
+<html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -8,9 +8,10 @@
 <title>Entrar</title>
 <link rel="icon" href="icon-192.png">
 <link rel="stylesheet" href="glass/fonts.css?v=3.8.0">
-<link rel="stylesheet" href="style.css?v=20260915a">
-<link rel="stylesheet" href="theme-grafana.css?v=20261012">
 <style>
+/* v4.0: a tela de login não depende mais do CSS da interface clássica */
+:root{--bg:#0b1120;--panel:#111a2e;--panel2:#0f1729;--border:rgba(148,163,184,.16);--text:#e2e8f0;--muted:#8b98ad;
+  --accent:#3b82f6;--red:#ef4444;--orange:#f97316;color-scheme:dark}
 *{box-sizing:border-box}
 html,body{height:100%}
 body{margin:0;font-family:Inter,system-ui,sans-serif;background:var(--bg);color:var(--text);display:grid;place-items:center;padding:20px;
@@ -43,9 +44,6 @@ button.go:hover{filter:brightness(1.08)} button.go:active{transform:translateY(1
 .shake{animation:shk .35s}
 @keyframes shk{20%,60%{transform:translateX(-6px)}40%,80%{transform:translateX(6px)}}
 @media (prefers-reduced-motion:reduce){.shake{animation:none}}
-[data-theme="grafana"] body{background-image:none}
-[data-theme="grafana"] .lg{border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,.12)}
-[data-theme="grafana"] .lg-logo{border-radius:4px}
 </style>
 <link rel="stylesheet" href="glass/login.css?v=3.8.0">
 </head>

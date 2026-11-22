@@ -712,17 +712,20 @@ dependencies = [
 
 [[package]]
 name = "netnoc-collector"
-version = "3.13.0"
+version = "4.1.0"
 dependencies = [
  "anyhow",
  "fernet",
  "rand 0.8.8",
  "reqwest",
  "rusqlite",
+ "rustls",
  "serde",
  "serde_json",
+ "sha2",
  "surge-ping",
  "tokio",
+ "tokio-rustls",
  "toml",
  "tracing",
  "tracing-subscriber",

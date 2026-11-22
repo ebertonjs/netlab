@@ -8,3 +8,4 @@ pub mod health;
 pub mod mikrotik;
 pub mod ping;
 pub mod settings;
+pub mod tlspin;

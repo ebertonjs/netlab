@@ -1,14 +1,14 @@
-"""MikroTik, AdGuard Home, SNMP, Zabbix, câmeras do DVR (inclui o WebSocket do vídeo) e banda por aparelho."""
-import asyncio, json
-from typing import List, Optional
+"""MikroTik, AdGuard Home e câmeras do DVR (inclui o WebSocket do vídeo)."""
+import asyncio, json, re
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request, WebSocket
 from fastapi.responses import Response
 from pydantic import BaseModel
 
-from netnoc.coleta import monitor, snmp
-from netnoc.integracoes import dvr, zabbix
-from netnoc.nucleo import security
+from netnoc.coleta import medir, monitor, syslog
+from netnoc.integracoes import dvr
+from netnoc.nucleo import security, tlspin
 from netnoc.web.comum import audit, need_admin, RANGE_SECONDS, secs
 
 router = APIRouter()
@@ -23,6 +23,23 @@ class MikrotikIn(BaseModel):
     username: str = ""
     password: str = ""
     sync_interval_seconds: int = 60
+    wan_iface: str = ""
+    cert_sha256: str = ""
+    plan_mbps: int = 0
+
+
+class MedirIn(BaseModel):
+    seconds: int = medir.DEFAULT_S
+
+
+class SyslogIn(BaseModel):
+    enabled: bool = False
+    port: int = 5514
+
+
+class CertIn(BaseModel):
+    host: str
+    port: int = 443
 
 
 def _check_hostport(host, port, enabled):
@@ -46,6 +63,15 @@ def set_mikrotik_ep(data: MikrotikIn, request: Request):
     except ValueError as e:
         raise HTTPException(400, str(e))
     payload["sync_interval_seconds"] = max(15, int(payload["sync_interval_seconds"]))
+    payload["wan_iface"] = (payload.get("wan_iface") or "").strip()
+    if payload["wan_iface"] and not re.fullmatch(r"[\w .:@<>/+-]{1,40}", payload["wan_iface"]):
+        raise HTTPException(400, "Nome da porta WAN inválido")
+    if not 0 <= int(payload.get("plan_mbps") or 0) <= 100000:
+        raise HTTPException(400, "Velocidade do plano inválida")
+    try:
+        payload["cert_sha256"] = tlspin.norm(payload.get("cert_sha256"))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     monitor.set_mikrotik(payload)
     audit(request, "mikrotik", payload["host"])
     if payload["enabled"]:
@@ -58,9 +84,63 @@ def test_mikrotik_ep():
     try:
         leases = monitor.fetch_dhcp_leases()
     except Exception as e:
-        raise HTTPException(400, f"Não foi possível conectar: {e}")
+        raise HTTPException(400, f"Não foi possível conectar: {monitor._safe_err(e)}")
     monitor.sync_dhcp_leases()
     return {"ok": True, "leases_found": len(leases)}
+
+
+@router.post("/api/settings/mikrotik/cert")
+def mikrotik_cert_ep(data: CertIn):
+    """Lê a impressão digital do certificado que o MikroTik apresenta, para o usuário conferir e fixar."""
+    _check_hostport(data.host, data.port, True)
+    try:
+        fp = tlspin.fetch(data.host, data.port)
+    except Exception as e:
+        raise HTTPException(400, f"Não consegui ler o certificado: {type(e).__name__}")
+    return {"sha256": fp, "pretty": tlspin.pretty(fp)}
+
+
+# ---------------------------------------------------------------- Medir agora (v4.3)
+@router.get("/api/wan/medir")
+def medir_get():
+    return {**medir.state(), "history": medir.history()[:10], "plan_mbps": monitor.get_mikrotik().get("plan_mbps") or 0,
+            "min_s": medir.MIN_S, "max_s": medir.MAX_S}
+
+
+@router.post("/api/wan/medir")
+def medir_post(data: MedirIn, request: Request):
+    try:
+        st = medir.start(data.seconds, who=(request.scope.get("state", {}).get("user") or "painel"))
+    except medir.MedirError as e:
+        raise HTTPException(400, str(e))
+    audit(request, "medir", f"{st['iface']} {st['seconds']} s")
+    return st
+
+
+# ---------------------------------------------------------------- syslog do MikroTik (v4.3)
+@router.get("/api/settings/syslog")
+def syslog_get():
+    return syslog.status()
+
+
+@router.post("/api/settings/syslog")
+def syslog_set(data: SyslogIn, request: Request):
+    need_admin(request)
+    try:
+        syslog.set_cfg(data.dict())
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    audit(request, "syslog", f"{'on' if data.enabled else 'off'} {data.port}")
+    return syslog.status()
+
+
+@router.get("/api/mikrotik/log")
+def mikrotik_log(minutes: int = 1440, topic: Optional[str] = None, q: Optional[str] = None, limit: int = 200):
+    if topic and not re.fullmatch(r"[a-z][a-z0-9-]{0,30}", topic):
+        raise HTTPException(400, "Tópico inválido")
+    return {"status": syslog.status(),
+            "rows": syslog.recent(minutes=max(1, min(minutes, 43200)), topic=topic, text=(q or "")[:60] or None,
+                                  limit=max(1, min(limit, 1000)))}
 
 
 @router.get("/api/mikrotik/status")
@@ -72,6 +152,46 @@ def mikrotik_status_ep():
 @router.get("/api/mikrotik/interfaces")
 def mikrotik_interfaces_ep():
     return monitor.get_mikrotik_interfaces()
+
+
+# ---------------------------------------------------- portas: ligar/desligar pela interface (v4.1)
+# Funciona pela rede local mesmo com a internet (e o Telegram) fora: é o jeito de religar o PPPoE.
+@router.get("/api/mikrotik/ports")
+def ports_ep(request: Request):
+    need_admin(request)
+    from netnoc.bot import actions
+    try:
+        srv = actions._server_ports()
+        return [dict(i, wan=actions.is_wan(i), server=i["name"] in srv) for i in actions.interfaces()
+                if i["type"] in ("ether", "wlan", "wifi", "pppoe-out", "sfp", "vlan")]
+    except actions.ActionError as e:
+        raise HTTPException(400, str(e))
+
+
+class PortIn(BaseModel):
+    name: str
+    enabled: bool
+
+
+@router.post("/api/mikrotik/ports")
+def port_set_ep(data: PortIn, request: Request):
+    from netnoc.bot import actions
+    try:
+        itf = next((i for i in actions.interfaces() if i["name"] == data.name), None)
+        if not itf:
+            raise HTTPException(404, "Porta não encontrada")
+        msg = actions.iface_on(itf) if data.enabled else actions.iface_off(itf, 0)
+    except actions.ActionError as e:
+        raise HTTPException(400, str(e))
+    audit(request, "porta-" + ("ligar" if data.enabled else "desligar"), data.name)
+    return {"ok": True, "message": msg}
+
+
+@router.get("/api/wan/peak")
+def wan_peak_ep():
+    """Maior download/upload na porta WAN do MikroTik hoje, em 7 e em 30 dias (v4.0, no lugar do speedtest)."""
+    return {"today": monitor.wan_peak(86400), "d7": monitor.wan_peak(7 * 86400), "d30": monitor.wan_peak(30 * 86400),
+            "iface": monitor.wan_iface()}
 
 
 @router.get("/api/mikrotik/history")
@@ -143,94 +263,6 @@ def agh_history_ep(range: str = "1h"):
     return monitor.get_agh_stats_history(secs(range) if range in RANGE_SECONDS else 3600)
 
 
-# -------------------------------------------------------------------- SNMP
-@router.get("/api/settings/snmp")
-def snmp_get(request: Request):
-    need_admin(request)
-    return snmp.masked_devices()
-
-
-@router.post("/api/settings/snmp")
-def snmp_set(data: List[dict], request: Request):
-    try:
-        snmp.save_devices(data)
-    except (ValueError, KeyError, TypeError) as e:
-        raise HTTPException(400, str(e))
-    audit(request, "snmp", len(data))
-    return {"ok": True}
-
-
-def _snmp_dev(name):
-    for d in snmp.get_devices():
-        if d["name"] == name:
-            return d
-    raise HTTPException(404, "Dispositivo SNMP não encontrado")
-
-
-@router.post("/api/snmp/test/{name}")
-def snmp_test(name: str, request: Request):
-    try:
-        res = snmp.poll_device(_snmp_dev(name))
-    except RuntimeError as e:
-        raise HTTPException(400, str(e))
-    return {"ok": True, "sysname": res.get("sysname"), "uptime_s": res.get("uptime_s"), "custom": res.get("custom")}
-
-
-class WalkIn(BaseModel):
-    device: str
-    oid: str
-
-
-@router.post("/api/snmp/walk")
-def snmp_walk(item: WalkIn, request: Request):
-    try:
-        rows = snmp.walk(_snmp_dev(item.device), item.oid)
-    except (ValueError, RuntimeError) as e:
-        raise HTTPException(400, str(e))
-    audit(request, "snmp-walk", f"{item.device} {item.oid}")
-    return rows
-
-
-@router.get("/api/snmp/latest")
-def snmp_latest(device: Optional[str] = None):
-    return snmp.latest(device)
-
-
-@router.get("/api/snmp/history")
-def snmp_history(device: str, key: str, range: str = "1h"):
-    return snmp.history(device, key, secs(range) if range in RANGE_SECONDS else 3600)
-
-
-# ------------------------------------------------------------------ Zabbix
-@router.get("/api/settings/zabbix")
-def zabbix_get(request: Request):
-    need_admin(request)
-    return zabbix.masked()
-
-
-@router.post("/api/settings/zabbix")
-def zabbix_set(data: dict, request: Request):
-    try:
-        zabbix.save_cfg(data)
-    except (ValueError, TypeError) as e:
-        raise HTTPException(400, str(e))
-    audit(request, "zabbix", data.get("url"))
-    return {"ok": True}
-
-
-@router.post("/api/settings/zabbix/test")
-def zabbix_test():
-    try:
-        return {"ok": True, "version": zabbix.test()}
-    except Exception as e:
-        raise HTTPException(400, f"Falha: {str(e)[:200]}")
-
-
-@router.get("/api/zabbix/problems")
-def zabbix_problems():
-    return zabbix.problems()
-
-
 # ------------------------------------------------------------ câmeras (DVR Intelbras)
 @router.get("/api/settings/dvr")
 def dvr_get(request: Request):
@@ -259,11 +291,6 @@ def dvr_test(request: Request):
 @router.get("/api/cam/status")
 def cam_status():
     return dvr.status()
-
-
-@router.get("/api/cam/viewers")
-def cam_viewers():
-    return {"viewers": dvr.viewers()}
 
 
 @router.get("/api/cam/snapshot/{ch}")
@@ -331,12 +358,3 @@ async def cam_ws(websocket: WebSocket, src: str = ""):
             await websocket.close()
         except Exception:
             pass
-
-
-@router.get("/api/bandwidth")
-def bandwidth_ep():
-    from netnoc.bot import actions
-    try:
-        return actions.bandwidth_top(3)
-    except actions.ActionError as e:
-        raise HTTPException(400, str(e))

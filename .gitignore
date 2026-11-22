@@ -17,3 +17,6 @@ go2rtc.yaml.tmp
 # coletor Rust: saída da compilação
 collector/target/
 collector/medicoes.txt
+# cópias do atualizar.sh
+atualizacoes/
+.pytest_cache/
